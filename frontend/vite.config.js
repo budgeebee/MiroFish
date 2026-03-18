@@ -14,6 +14,7 @@ export default defineConfig({
   server: {
     port: 3000,
     open: true,
+    allowedHosts: ['raspi.tailc18d86.ts.net'],
     proxy: {
       '/api': {
         target: 'http://localhost:5001',
