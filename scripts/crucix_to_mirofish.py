@@ -18,6 +18,7 @@ Environment:
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -388,6 +389,60 @@ def crucix_to_markdown(data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# News Aggregator (8 global sources)
+# ---------------------------------------------------------------------------
+
+NEWS_AGGREGATOR_SCRIPT = os.path.expanduser(
+    "~/.openclaw/workspace/skills/news-aggregator-skill/scripts/fetch_news.py"
+)
+
+
+def fetch_news_aggregator(limit=12):
+    """Run news-aggregator and return parsed JSON list, or [] on failure."""
+    if not os.path.exists(NEWS_AGGREGATOR_SCRIPT):
+        print("  Warning: news-aggregator-skill not found, skipping")
+        return []
+    try:
+        result = subprocess.run(
+            ["python3", NEWS_AGGREGATOR_SCRIPT, "--source", "all", "--limit", str(limit)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            print(f"  Warning: news-aggregator failed: {result.stderr[:200]}")
+            return []
+        return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
+        print(f"  Warning: news-aggregator error: {e}")
+        return []
+
+
+def news_to_markdown(items: list) -> str:
+    """Convert news-aggregator JSON items into markdown sections by source."""
+    if not items:
+        return ""
+    by_source = {}
+    for item in items:
+        src = item.get("source", "Unknown")
+        by_source.setdefault(src, []).append(item)
+
+    lines = []
+    for src, src_items in by_source.items():
+        lines.append(f"**{src}:**")
+        for item in src_items:
+            title = item.get("title", "?")
+            heat = item.get("heat", "")
+            time_str = item.get("time", "")
+            extra = f" ({heat})" if heat else ""
+            extra += f" — {time_str}" if time_str else ""
+            lines.append(f"- {title}{extra}")
+        lines.append("")
+
+    return _section("Global News & Tech Headlines (8 sources)", "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # MiroFish API pipeline
 # ---------------------------------------------------------------------------
 
@@ -640,6 +695,7 @@ def main():
     parser.add_argument("--crucix-json", default=CRUCIX_LATEST, help="Path to latest.json")
     parser.add_argument("--dry-run", action="store_true", help="Just generate markdown, don't run simulation")
     parser.add_argument("--project-name", default=None, help="Override project name")
+    parser.add_argument("--no-news", action="store_true", help="Skip news-aggregator fetch")
     args = parser.parse_args()
 
     # Load Crucix data
@@ -659,7 +715,19 @@ def main():
 
     # Convert to markdown
     md = crucix_to_markdown(data)
-    print(f"  Brief: {len(md)} characters")
+    print(f"  Crucix brief: {len(md)} characters")
+
+    # Fetch and append news-aggregator headlines
+    if not args.no_news:
+        print("Fetching news-aggregator (8 global sources)...")
+        news_items = fetch_news_aggregator(limit=12)
+        if news_items:
+            news_md = news_to_markdown(news_items)
+            md += "\n" + news_md
+            print(f"  Added {len(news_items)} headlines from {len(set(i.get('source') for i in news_items))} sources")
+        else:
+            print("  No news items retrieved")
+    print(f"  Total brief: {len(md)} characters")
 
     # Write to temp file (or output dir for dry-run)
     if args.dry_run:
