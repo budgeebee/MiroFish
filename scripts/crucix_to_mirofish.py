@@ -122,7 +122,7 @@ def crucix_to_markdown(data: dict) -> str:
     if oil:
         lines = []
         for fuel in ["wti", "brent"]:
-            info = oil.get(fuel, {})
+            info = oil.get(fuel) or {}
             if info.get("value"):
                 recent = info.get("recent", [])
                 trend = ""
@@ -133,11 +133,11 @@ def crucix_to_markdown(data: dict) -> str:
                     elif vals[0] < vals[1] < vals[2]:
                         trend = " (trending DOWN)"
                 lines.append(f"- **{info.get('label', fuel)}**: ${info['value']:.2f}{trend}")
-        gas = eia.get("gasPrice", {})
+        gas = eia.get("gasPrice") or {}
         if gas.get("value"):
             lines.append(f"- **Natural Gas**: ${gas['value']:.2f}")
         inv = eia.get("inventories", {})
-        crude = inv.get("crudeStocks", {})
+        crude = inv.get("crudeStocks") or {}
         if crude.get("value"):
             lines.append(f"- **Crude Stocks**: {crude['value']:.1f}M bbl")
         signals = eia.get("signals", [])
@@ -493,7 +493,7 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str):
                 "simulation_requirement": SIMULATION_REQUIREMENT,
                 "project_name": project_name,
             },
-            timeout=120,
+            timeout=300,
         )
     if not r.ok:
         print(f"  HTTP {r.status_code}")

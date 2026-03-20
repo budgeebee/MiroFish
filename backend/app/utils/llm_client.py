@@ -66,7 +66,11 @@ class LLMClient:
             kwargs["response_format"] = response_format
         
         response = self.client.chat.completions.create(**kwargs)
+        if not response.choices:
+            return None
         content = response.choices[0].message.content
+        if content is None:
+            return None
         # 部分模型（如MiniMax M2.5）会在content中包含<think>思考内容，需要移除
         content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
         return content
@@ -97,6 +101,14 @@ class LLMClient:
                 max_tokens=max_tokens,
                 response_format={"type": "json_object"}
             )
+            if response is None:
+                import logging
+                logger = logging.getLogger('mirofish.llm_client')
+                logger.warning(
+                    f"JSON chat attempt {attempt + 1}/{max_retries}: LLM returned None, retrying..."
+                )
+                last_error = "LLM returned None response"
+                continue
             # 清理markdown代码块标记
             cleaned_response = response.strip()
             cleaned_response = re.sub(r'^```(?:json)?\s*\n?', '', cleaned_response, flags=re.IGNORECASE)
