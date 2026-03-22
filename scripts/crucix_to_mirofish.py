@@ -32,6 +32,8 @@ CRUCIX_LATEST = os.getenv(
     "CRUCIX_LATEST",
     os.path.expanduser("~/Projects/Crucix/runs/latest.json"),
 )
+SCHWALPACA_URL = os.getenv("SCHWALPACA_URL", "http://localhost:8855")
+SCHWALPACA_API_KEY = os.getenv("SCHWALPACA_API_KEY", "")
 
 SIMULATION_REQUIREMENT = """\
 Simulate how active traders, market analysts, institutional investors, retail \
@@ -443,6 +445,167 @@ def news_to_markdown(items: list) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Social Sentiment for held positions
+# ---------------------------------------------------------------------------
+
+
+def get_held_symbols():
+    """Read open positions from the schwalpaca trading journal."""
+    journal_path = os.path.expanduser("~/.openclaw/workspace/trading-journal.json")
+    if not os.path.exists(journal_path):
+        return []
+    try:
+        with open(journal_path) as f:
+            journal = json.load(f)
+        return list({t["symbol"] for t in journal.get("trades", []) if t.get("status") == "open" and t.get("symbol")})
+    except Exception:
+        return []
+
+
+def fetch_social_sentiment(symbol):
+    """Fetch social sentiment for a symbol from schwalpaca API."""
+    try:
+        headers = {"X-API-Key": SCHWALPACA_API_KEY}
+        r = requests.get(
+            f"{SCHWALPACA_URL}/intel/social-sentiment/{symbol}",
+            headers=headers,
+            timeout=60,
+        )
+        if r.ok:
+            return r.json()
+    except Exception as e:
+        print(f"  Warning: sentiment fetch failed for {symbol}: {e}")
+    return None
+
+
+def sentiment_to_markdown(sentiments: dict) -> str:
+    """Convert social sentiment data for held symbols into markdown."""
+    if not sentiments:
+        return ""
+
+    lines = []
+    for symbol, data in sentiments.items():
+        if not data or data.get("error"):
+            continue
+        overall = data.get("overall", "?").upper()
+        confidence = data.get("confidence", 0)
+        summary = data.get("summary", "")
+        lines.append(f"**{symbol}** — {overall} ({confidence*100:.0f}% confidence)")
+        if summary:
+            lines.append(f"> {summary}")
+        bull = data.get("bull_points", [])
+        bear = data.get("bear_points", [])
+        if bull:
+            lines.append(f"- Bullish: {'; '.join(bull[:3])}")
+        if bear:
+            lines.append(f"- Bearish: {'; '.join(bear[:3])}")
+        themes = data.get("key_themes", [])
+        if themes:
+            lines.append(f"- Themes: {', '.join(themes[:3])}")
+        lines.append("")
+
+    if not lines:
+        return ""
+    return _section("Social Sentiment — Held Positions (Perplexity + X/Twitter)", "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Screeners
+# ---------------------------------------------------------------------------
+
+
+def fetch_screeners():
+    """Fetch all screeners from schwalpaca API."""
+    try:
+        headers = {"X-API-Key": SCHWALPACA_API_KEY}
+        r = requests.get(
+            f"{SCHWALPACA_URL}/market-data/screen/all",
+            headers=headers,
+            params={"sentiment": True},
+            timeout=120,
+        )
+        if r.ok:
+            return r.json()
+    except Exception as e:
+        print(f"  Warning: screeners fetch failed: {e}")
+    return None
+
+
+def screeners_to_markdown(data: dict) -> str:
+    """Convert screener results into markdown for MiroFish brief."""
+    if not data:
+        return ""
+
+    parts = []
+
+    # 52-week highs
+    high = data.get("near_52w_high", [])
+    if high:
+        lines = []
+        for s in high[:8]:
+            sym = s["symbol"]
+            pct = s.get("pct_from_high", 0)
+            vol = s.get("volume_ratio", 1)
+            sent = s.get("sentiment")
+            sent_str = ""
+            if sent and not sent.get("error"):
+                sent_str = f" — {sent.get('sentiment', '?').upper()} ({sent.get('confidence', 0)*100:.0f}%)"
+            lines.append(f"- **{sym}**: {pct:.1f}% from 52w high, vol {vol:.1f}x{sent_str}")
+        parts.append(_section("Stocks Near 52-Week Highs", "\n".join(lines)))
+
+    # Unusual volume
+    volume = data.get("unusual_volume", [])
+    if volume:
+        lines = []
+        for s in volume[:8]:
+            sym = s["symbol"]
+            ratio = s.get("volume_ratio", 1)
+            change = s.get("change_pct", 0)
+            sent = s.get("sentiment")
+            sent_str = ""
+            if sent and not sent.get("error"):
+                sent_str = f" — {sent.get('sentiment', '?').upper()}"
+            sign = "+" if change >= 0 else ""
+            lines.append(f"- **{sym}**: {ratio:.1f}x avg volume, {sign}{change:.1f}%{sent_str}")
+        parts.append(_section("Unusual Volume Activity", "\n".join(lines)))
+
+    # Strong momentum
+    momentum = data.get("strong_momentum", [])
+    if momentum:
+        lines = []
+        for s in momentum[:8]:
+            sym = s["symbol"]
+            mom5 = s.get("momentum_5d", 0)
+            mom20 = s.get("momentum_20d", 0)
+            sent = s.get("sentiment")
+            sent_str = ""
+            if sent and not sent.get("error"):
+                sent_str = f" — {sent.get('sentiment', '?').upper()}"
+            lines.append(f"- **{sym}**: +{mom5:.1f}% (5d), +{mom20:.1f}% (20d){sent_str}")
+        parts.append(_section("Strong Momentum Stocks", "\n".join(lines)))
+
+    # Sector rotation
+    sectors = data.get("sector_rotation", {})
+    if sectors and sectors.get("sectors"):
+        lines = [f"**Rotation signal**: {sectors.get('rotation_signal', '?')}"]
+        leaders = sectors.get("leaders", [])
+        laggers = sectors.get("laggers", [])
+        if leaders:
+            lines.append("")
+            lines.append("**Leaders (5d):**")
+            for s in leaders:
+                lines.append(f"- **{s['etf']}** ({s['sector']}): +{s['perf_5d']:.1f}%")
+        if laggers:
+            lines.append("")
+            lines.append("**Laggers (5d):**")
+            for s in laggers:
+                lines.append(f"- **{s['etf']}** ({s['sector']}): {s['perf_5d']:.1f}%")
+        parts.append(_section("Sector Rotation", "\n".join(lines)))
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # MiroFish API pipeline
 # ---------------------------------------------------------------------------
 
@@ -728,6 +891,40 @@ def main():
         else:
             print("  No news items retrieved")
     print(f"  Total brief: {len(md)} characters")
+
+    # Fetch social sentiment for held positions
+    print("Fetching social sentiment for held positions...")
+    held_symbols = get_held_symbols()
+    if held_symbols:
+        print(f"  Held symbols: {', '.join(held_symbols)}")
+        sentiments = {}
+        for sym in held_symbols[:5]:
+            data = fetch_social_sentiment(sym)
+            if data and not data.get("error"):
+                sentiments[sym] = data
+                print(f"  ✓ {sym}: {data.get('overall', '?')}")
+            else:
+                print(f"  ✗ {sym}: {data.get('error', 'no data') if data else 'failed'}")
+        sentiment_md = sentiment_to_markdown(sentiments)
+        if sentiment_md:
+            md += "\n" + sentiment_md
+            print(f"  Added sentiment for {len(sentiments)} symbols")
+    else:
+        print("  No held positions found in journal")
+
+    # Fetch market screeners
+    print("Fetching market screeners...")
+    screeners = fetch_screeners()
+    if screeners:
+        near_high = len(screeners.get("near_52w_high", []))
+        unusual_vol = len(screeners.get("unusual_volume", []))
+        momentum = len(screeners.get("strong_momentum", []))
+        print(f"  Near 52w high: {near_high}, Unusual volume: {unusual_vol}, Momentum: {momentum}")
+        screeners_md = screeners_to_markdown(screeners)
+        if screeners_md:
+            md += "\n" + screeners_md
+    else:
+        print("  Screeners unavailable")
 
     # Write to temp file (or output dir for dry-run)
     if args.dry_run:
