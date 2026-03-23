@@ -406,7 +406,7 @@ def fetch_news_aggregator(limit=12):
         return []
     try:
         result = subprocess.run(
-            ["python3", NEWS_AGGREGATOR_SCRIPT, "--source", "all", "--limit", str(limit)],
+            ["python3", NEWS_AGGREGATOR_SCRIPT, "--source", "all", "--limit", str(limit), "--deep"],
             capture_output=True,
             text=True,
             timeout=60,
