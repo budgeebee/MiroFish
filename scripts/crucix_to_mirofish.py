@@ -22,7 +22,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -606,6 +606,63 @@ def screeners_to_markdown(data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Screener Ticker News (past 7 days)
+# ---------------------------------------------------------------------------
+
+
+def fetch_screener_news(screener_data: dict, held_symbols: set, days: int = 7) -> dict:
+    """Fetch news for screener tickers (past N days). Returns {symbol: [articles]}."""
+    if not screener_data:
+        return {}
+
+    screener_symbols = set()
+    for key in ["near_52w_high", "unusual_volume", "strong_momentum"]:
+        for item in screener_data.get(key, []):
+            sym = item.get("symbol")
+            if sym and sym not in held_symbols:
+                screener_symbols.add(sym)
+
+    if not screener_symbols:
+        return {}
+
+    from_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    headers = {"X-API-Key": SCHWALPACA_API_KEY}
+    results = {}
+    for sym in list(screener_symbols)[:10]:
+        try:
+            r = requests.get(
+                f"{SCHWALPACA_URL}/intel/news/{sym}",
+                headers=headers,
+                params={"from": from_date, "limit": 3},
+                timeout=10,
+            )
+            if r.ok:
+                articles = r.json()
+                if articles:
+                    results[sym] = articles
+        except Exception:
+            pass
+    return results
+
+
+def screener_news_to_markdown(news_data: dict) -> str:
+    """Convert screener ticker news into markdown."""
+    if not news_data:
+        return ""
+
+    lines = []
+    for sym, articles in sorted(news_data.items()):
+        lines.append(f"**{sym}:**")
+        for a in articles[:3]:
+            headline = a.get("headline") or a.get("title", "?")
+            source = a.get("source", "")
+            lines.append(f"- {headline} *(via {source})*")
+        lines.append("")
+
+    return _section("Screener Ticker News (past 7 days)", "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # MiroFish API pipeline
 # ---------------------------------------------------------------------------
 
@@ -923,6 +980,19 @@ def main():
         screeners_md = screeners_to_markdown(screeners)
         if screeners_md:
             md += "\n" + screeners_md
+
+        # Fetch 7-day news for screener tickers (excluding held positions)
+        held_set = set(held_symbols) if held_symbols else set()
+        print("Fetching news for screener tickers (past 7 days)...")
+        screener_news = fetch_screener_news(screeners, held_set, days=7)
+        if screener_news:
+            total_articles = sum(len(v) for v in screener_news.values())
+            print(f"  Found {total_articles} articles across {len(screener_news)} tickers")
+            screener_news_md = screener_news_to_markdown(screener_news)
+            if screener_news_md:
+                md += "\n" + screener_news_md
+        else:
+            print("  No screener ticker news found")
     else:
         print("  Screeners unavailable")
 
