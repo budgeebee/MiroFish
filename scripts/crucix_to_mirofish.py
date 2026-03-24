@@ -34,6 +34,7 @@ CRUCIX_LATEST = os.getenv(
 )
 SCHWALPACA_URL = os.getenv("SCHWALPACA_URL", "http://localhost:8855")
 SCHWALPACA_API_KEY = os.getenv("SCHWALPACA_API_KEY", "")
+_TIMEOUT = 10
 
 SIMULATION_REQUIREMENT = """\
 Simulate how active traders, market analysts, institutional investors, retail \
@@ -606,6 +607,242 @@ def screeners_to_markdown(data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Movers
+# ---------------------------------------------------------------------------
+
+
+def fetch_movers(index='$SPX.X'):
+    """Fetch top gainers/losers from schwalpaca API (Schwab)."""
+    try:
+        headers = {"X-API-Key": SCHWALPACA_API_KEY}
+        r = requests.get(
+            f"{SCHWALPACA_URL}/market-data/schwab/movers/{index}",
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        if r.ok:
+            return r.json()
+    except Exception as e:
+        print(f"  Warning: movers fetch failed: {e}")
+    return None
+
+
+def movers_to_markdown(movers: list, held_symbols: set) -> str:
+    """Format movers as markdown. Exclude held positions."""
+    if not movers:
+        return ""
+
+    lines = []
+    for m in movers[:10]:
+        sym = m.get('symbol', '?')
+        if sym in held_symbols:
+            continue
+        change_pct = m.get('change_percent', 0) or 0
+        change = m.get('change', 0) or 0
+        volume = m.get('volume')
+        direction = "GAINER" if change_pct >= 0 else "LOSER"
+        sign = "+" if change_pct >= 0 else ""
+        vol_str = f", vol {volume:,}" if volume else ""
+        lines.append(f"- **{sym}**: {sign}{change_pct:.2f}% ({sign}${change:.2f}) [{direction}]{vol_str}")
+
+    if not lines:
+        return ""
+    return _section("Market Movers (Schwab)", "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Mover Ticker News
+# ---------------------------------------------------------------------------
+
+
+def fetch_mover_news(movers: list, held_symbols: set, days: int = 3) -> dict:
+    """Fetch news for top movers (excluding held). Returns {symbol: [articles]}."""
+    if not movers:
+        return {}
+
+    from_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    headers = {"X-API-Key": SCHWALPACA_API_KEY}
+    results = {}
+    count = 0
+    for m in movers:
+        if count >= 8:
+            break
+        sym = m.get('symbol')
+        if not sym or sym in held_symbols:
+            continue
+        try:
+            r = requests.get(
+                f"{SCHWALPACA_URL}/intel/news/{sym}",
+                headers=headers,
+                params={"from": from_date, "limit": 3},
+                timeout=_TIMEOUT,
+            )
+            if r.ok:
+                articles = r.json()
+                if articles:
+                    results[sym] = articles
+                    count += 1
+        except Exception:
+            pass
+    return results
+
+
+def mover_news_to_markdown(news_data: dict) -> str:
+    """Format mover news as markdown."""
+    if not news_data:
+        return ""
+
+    lines = []
+    for sym, articles in sorted(news_data.items()):
+        lines.append(f"**{sym}:**")
+        for a in articles[:3]:
+            headline = a.get("headline") or a.get("title", "?")
+            source = a.get("source", "")
+            lines.append(f"- {headline} *(via {source})*")
+        lines.append("")
+
+    return _section("Mover Catalyst News", "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Mover Sentiment
+# ---------------------------------------------------------------------------
+
+
+def fetch_mover_sentiment(movers: list, held_symbols: set) -> dict:
+    """Fetch social sentiment for top movers (excluding held). Cap at 5 (60s timeout each)."""
+    if not movers:
+        return {}
+
+    headers = {"X-API-Key": SCHWALPACA_API_KEY}
+    results = {}
+    count = 0
+    for m in movers:
+        if count >= 5:
+            break
+        sym = m.get('symbol')
+        if not sym or sym in held_symbols:
+            continue
+        try:
+            r = requests.get(
+                f"{SCHWALPACA_URL}/intel/social-sentiment/{sym}",
+                headers=headers,
+                timeout=60,
+            )
+            if r.ok:
+                data = r.json()
+                if data and not data.get("error"):
+                    results[sym] = data
+                    count += 1
+                    print(f"  ✓ {sym}: {data.get('overall', '?')}")
+                else:
+                    print(f"  ✗ {sym}: {data.get('error', 'no data') if data else 'failed'}")
+        except Exception as e:
+            print(f"  Warning: sentiment fetch failed for {sym}: {e}")
+    return results
+
+
+def mover_sentiment_to_markdown(sentiments: dict) -> str:
+    """Format mover sentiment as markdown. Same structure as held position sentiment."""
+    if not sentiments:
+        return ""
+
+    lines = []
+    for symbol, data in sentiments.items():
+        if not data or data.get("error"):
+            continue
+        overall = data.get("overall", "?").upper()
+        confidence = data.get("confidence", 0)
+        summary = data.get("summary", "")
+        lines.append(f"**{symbol}** — {overall} ({confidence*100:.0f}% confidence)")
+        if summary:
+            lines.append(f"> {summary}")
+        bull = data.get("bull_points", [])
+        bear = data.get("bear_points", [])
+        if bull:
+            lines.append(f"- Bullish: {'; '.join(bull[:3])}")
+        if bear:
+            lines.append(f"- Bearish: {'; '.join(bear[:3])}")
+        themes = data.get("key_themes", [])
+        if themes:
+            lines.append(f"- Themes: {', '.join(themes[:3])}")
+        lines.append("")
+
+    if not lines:
+        return ""
+    return _section("Social Sentiment — Market Movers", "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Technical Indicators
+# ---------------------------------------------------------------------------
+
+
+def fetch_indicators(symbol):
+    """Fetch technical indicators for a symbol (MA20/50, RSI14, momentum, vol, S/R)."""
+    try:
+        headers = {"X-API-Key": SCHWALPACA_API_KEY}
+        r = requests.get(
+            f"{SCHWALPACA_URL}/market-data/indicators/{symbol}",
+            headers=headers,
+            params={"period": "3M", "frequency": "daily"},
+            timeout=_TIMEOUT,
+        )
+        if r.ok:
+            return r.json()
+    except Exception as e:
+        print(f"  Warning: indicators fetch failed for {symbol}: {e}")
+    return None
+
+
+def indicators_to_markdown(indicators: dict) -> str:
+    """Format technical indicators for multiple symbols as markdown."""
+    if not indicators:
+        return ""
+
+    lines = []
+    for sym in sorted(indicators.keys()):
+        ind = indicators[sym]
+        parts = []
+        ma20 = ind.get("MA20")
+        ma50 = ind.get("MA50")
+        if ma20 is not None or ma50 is not None:
+            ma_str = f"MA20={ma20:.2f}" if ma20 is not None else ""
+            if ma50 is not None:
+                ma_str = f"{ma_str} MA50={ma50:.2f}" if ma_str else f"MA50={ma50:.2f}"
+            parts.append(ma_str)
+        rsi = ind.get("RSI14")
+        if rsi is not None:
+            parts.append(f"RSI14={rsi:.1f}")
+        vol_ratio = ind.get("volume_ratio")
+        if vol_ratio is not None:
+            parts.append(f"Vol {vol_ratio:.1f}x")
+        mom = ind.get("momentum_5d")
+        if mom is not None:
+            sign = "+" if mom >= 0 else ""
+            parts.append(f"Mom5d={sign}{mom:.1f}%")
+        vol20 = ind.get("volatility_20d")
+        if vol20 is not None:
+            parts.append(f"Vol20d={vol20:.2f}%")
+        support = ind.get("support")
+        resistance = ind.get("resistance")
+        if support is not None or resistance is not None:
+            sr = []
+            if support is not None:
+                sr.append(f"S={support:.2f}")
+            if resistance is not None:
+                sr.append(f"R={resistance:.2f}")
+            parts.append(" | ".join(sr))
+
+        if parts:
+            lines.append(f"- **{sym}**: {' | '.join(parts)}")
+
+    if not lines:
+        return ""
+    return _section("Technical Indicators", "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # Screener Ticker News (past 7 days)
 # ---------------------------------------------------------------------------
 
@@ -969,6 +1206,44 @@ def main():
     else:
         print("  No held positions found in journal")
 
+    # Fetch news for held positions
+    if held_symbols:
+        print("Fetching news for held positions...")
+        held_news = {}
+        for sym in held_symbols[:5]:
+            try:
+                headers = {"X-API-Key": SCHWALPACA_API_KEY}
+                r = requests.get(
+                    f"{SCHWALPACA_URL}/intel/news/{sym}",
+                    headers=headers,
+                    params={"limit": 5},
+                    timeout=_TIMEOUT,
+                )
+                if r.ok:
+                    articles = r.json()
+                    if articles:
+                        held_news[sym] = articles
+            except Exception:
+                pass
+        if held_news:
+            held_news_md = screener_news_to_markdown(held_news)
+            if held_news_md:
+                md += "\n" + held_news_md
+                print(f"  Added news for {len(held_news)} held positions")
+
+    # Fetch market movers (before screeners — screener candidate news uses movers)
+    print("Fetching market movers...")
+    movers = fetch_movers()
+    held_set = set(held_symbols) if held_symbols else set()
+    if movers:
+        non_held = [m for m in movers if m.get('symbol') not in held_set]
+        print(f"  {len(movers)} movers, {len(non_held)} non-held")
+        movers_md = movers_to_markdown(movers, held_set)
+        if movers_md:
+            md += "\n" + movers_md
+    else:
+        print("  Movers unavailable")
+
     # Fetch market screeners
     print("Fetching market screeners...")
     screeners = fetch_screeners()
@@ -981,20 +1256,139 @@ def main():
         if screeners_md:
             md += "\n" + screeners_md
 
-        # Fetch 7-day news for screener tickers (excluding held positions)
+        # Fetch news for screener + mover candidates (unified)
         held_set = set(held_symbols) if held_symbols else set()
-        print("Fetching news for screener tickers (past 7 days)...")
-        screener_news = fetch_screener_news(screeners, held_set, days=7)
-        if screener_news:
-            total_articles = sum(len(v) for v in screener_news.values())
-            print(f"  Found {total_articles} articles across {len(screener_news)} tickers")
-            screener_news_md = screener_news_to_markdown(screener_news)
-            if screener_news_md:
-                md += "\n" + screener_news_md
+        print("Fetching news for screener + mover candidates...")
+        candidate_symbols = set()
+        for key in ["near_52w_high", "unusual_volume", "strong_momentum"]:
+            for item in screeners.get(key, []):
+                sym = item.get("symbol")
+                if sym and sym not in held_set:
+                    candidate_symbols.add(sym)
+        if movers:
+            for m in movers[:10]:
+                sym = m.get("symbol")
+                if sym and sym not in held_set:
+                    candidate_symbols.add(sym)
+        if candidate_symbols:
+            from_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            headers = {"X-API-Key": SCHWALPACA_API_KEY}
+            candidate_news = {}
+            for sym in list(candidate_symbols)[:12]:
+                try:
+                    r = requests.get(
+                        f"{SCHWALPACA_URL}/intel/news/{sym}",
+                        headers=headers,
+                        params={"from": from_date, "limit": 3},
+                        timeout=_TIMEOUT,
+                    )
+                    if r.ok:
+                        articles = r.json()
+                        if articles:
+                            candidate_news[sym] = articles
+                except Exception:
+                    pass
+            if candidate_news:
+                total_articles = sum(len(v) for v in candidate_news.values())
+                print(f"  Found {total_articles} articles across {len(candidate_news)} tickers")
+                candidate_news_md = screener_news_to_markdown(candidate_news)
+                if candidate_news_md:
+                    md += "\n" + candidate_news_md
+            else:
+                print("  No candidate news found")
         else:
-            print("  No screener ticker news found")
+            print("  No non-held screener/mover candidates")
     else:
         print("  Screeners unavailable")
+
+    # Mover news & sentiment (movers already fetched above)
+    mover_sentiments = {}
+    if movers:
+        # Mover news (catalyst layer)
+        print("Fetching mover news (past 3 days)...")
+        mover_news = fetch_mover_news(movers, held_set, days=3)
+        if mover_news:
+            total_articles = sum(len(v) for v in mover_news.values())
+            print(f"  Found {total_articles} articles across {len(mover_news)} tickers")
+            mover_news_md = mover_news_to_markdown(mover_news)
+            if mover_news_md:
+                md += "\n" + mover_news_md
+        else:
+            print("  No mover news found")
+
+        # Mover sentiment (narrative layer)
+        print("Fetching mover sentiment...")
+        mover_sentiments = fetch_mover_sentiment(movers, held_set)
+        if mover_sentiments:
+            mover_sent_md = mover_sentiment_to_markdown(mover_sentiments)
+            if mover_sent_md:
+                md += "\n" + mover_sent_md
+
+    # Screener sentiment (non-held screener tickers)
+    if screeners:
+        held_set = set(held_symbols) if held_symbols else set()
+        already_fetched = set(mover_sentiments.keys())
+        screener_syms = set()
+        for key in ["near_52w_high", "unusual_volume", "strong_momentum"]:
+            for item in screeners.get(key, []):
+                sym = item.get("symbol")
+                if sym and sym not in held_set and sym not in already_fetched:
+                    screener_syms.add(sym)
+        if screener_syms:
+            print("Fetching screener sentiment...")
+            screener_sentiments = {}
+            for sym in list(screener_syms)[:5]:
+                try:
+                    headers = {"X-API-Key": SCHWALPACA_API_KEY}
+                    r = requests.get(
+                        f"{SCHWALPACA_URL}/intel/social-sentiment/{sym}",
+                        headers=headers,
+                        timeout=60,
+                    )
+                    if r.ok:
+                        data = r.json()
+                        if data and not data.get("error"):
+                            screener_sentiments[sym] = data
+                            print(f"  ✓ {sym}: {data.get('overall', '?')}")
+                        else:
+                            print(f"  ✗ {sym}: {data.get('error', 'no data') if data else 'failed'}")
+                except Exception as e:
+                    print(f"  Warning: sentiment fetch failed for {sym}: {e}")
+            if screener_sentiments:
+                screener_sent_md = mover_sentiment_to_markdown(screener_sentiments)
+                if screener_sent_md:
+                    md += "\n" + screener_sent_md
+
+    # Technical indicators (held positions + screeners + top movers)
+    print("Fetching technical indicators...")
+    indicator_symbols = set()
+    if held_symbols:
+        for sym in held_symbols[:5]:
+            indicator_symbols.add(sym)
+    if screeners:
+        for key in ["near_52w_high", "unusual_volume", "strong_momentum"]:
+            for item in screeners.get(key, []):
+                sym = item.get("symbol")
+                if sym:
+                    indicator_symbols.add(sym)
+    if movers:
+        for m in movers[:10]:
+            sym = m.get('symbol')
+            if sym:
+                indicator_symbols.add(sym)
+    if indicator_symbols:
+        all_indicators = {}
+        for sym in list(indicator_symbols)[:12]:
+            ind = fetch_indicators(sym)
+            if ind and not ind.get("error"):
+                all_indicators[sym] = ind
+                print(f"  ✓ {sym}")
+            else:
+                print(f"  ✗ {sym}")
+        indicators_md = indicators_to_markdown(all_indicators)
+        if indicators_md:
+            md += "\n" + indicators_md
+            print(f"  Added indicators for {len(all_indicators)} symbols")
 
     # Write to temp file (or output dir for dry-run)
     if args.dry_run:
