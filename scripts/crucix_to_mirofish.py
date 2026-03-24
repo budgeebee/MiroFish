@@ -843,6 +843,134 @@ def indicators_to_markdown(indicators: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Options Flow (put/call ratio + unusual activity)
+# ---------------------------------------------------------------------------
+
+
+def fetch_option_flow(symbol):
+    """Fetch option chain and compute put/call ratio + unusual activity for a symbol."""
+    try:
+        headers = {"X-API-Key": SCHWALPACA_API_KEY}
+        r = requests.get(
+            f"{SCHWALPACA_URL}/market-data/schwab/option-chain/{symbol}",
+            headers=headers,
+            params={"strike_count": 20},
+            timeout=30,
+        )
+        if not r.ok:
+            return None
+        chain = r.json()
+    except Exception as e:
+        print(f"  Warning: option chain fetch failed for {symbol}: {e}")
+        return None
+
+    if not chain or chain.get("error"):
+        return None
+
+    calls = chain.get("calls", [])
+    puts = chain.get("puts", [])
+    total_call_vol = sum(c.get("totalVolume", 0) for c in calls)
+    total_put_vol = sum(p.get("totalVolume", 0) for p in puts)
+    total_call_oi = sum(c.get("openInterest", 0) for c in calls)
+    total_put_oi = sum(p.get("openInterest", 0) for p in puts)
+    pc_ratio_vol = round(total_put_vol / total_call_vol, 2) if total_call_vol > 0 else None
+    pc_ratio_oi = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else None
+
+    # Flag unusual: volume >> open interest suggests new positioning
+    unusual = []
+    for opt in calls + puts:
+        vol = opt.get("totalVolume", 0)
+        oi = opt.get("openInterest", 0)
+        if oi > 0 and vol > oi * 2:
+            unusual.append({
+                "type": "call" if opt in calls else "put",
+                "strike": opt.get("strikePrice"),
+                "volume": vol,
+                "oi": oi,
+                "ratio": round(vol / oi, 1),
+            })
+
+    signal = ("bearish" if pc_ratio_vol and pc_ratio_vol > 1.5 else
+              "bullish" if pc_ratio_vol and pc_ratio_vol < 0.5 else "neutral")
+
+    return {
+        "total_call_volume": total_call_vol,
+        "total_put_volume": total_put_vol,
+        "put_call_ratio_volume": pc_ratio_vol,
+        "put_call_ratio_oi": pc_ratio_oi,
+        "unusual_activity": unusual[:5],
+        "signal": signal,
+    }
+
+
+def options_flow_to_markdown(flows: dict) -> str:
+    """Format options flow data for multiple symbols as markdown."""
+    if not flows:
+        return ""
+
+    lines = []
+    for sym in sorted(flows.keys()):
+        f = flows[sym]
+        pc_vol = f.get("put_call_ratio_volume")
+        pc_oi = f.get("put_call_ratio_oi")
+        signal = f.get("signal", "?").upper()
+        parts = [f"P/C vol={pc_vol}" if pc_vol else "", f"P/C OI={pc_oi}" if pc_oi else "", signal]
+        lines.append(f"- **{sym}**: {' | '.join(p for p in parts if p)}")
+        for u in f.get("unusual_activity", []):
+            lines.append(f"  - UNUSUAL: {u['type']} ${u['strike']} — vol {u['volume']} vs OI {u['oi']} ({u['ratio']}x)")
+
+    return _section("Options Flow (Put/Call + Unusual Activity)", "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Earnings Calendar
+# ---------------------------------------------------------------------------
+
+
+def fetch_earnings(days_ahead=7):
+    """Fetch earnings calendar for the next N days from schwalpaca."""
+    try:
+        headers = {"X-API-Key": SCHWALPACA_API_KEY}
+        today = datetime.now().strftime("%Y-%m-%d")
+        end = (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+        r = requests.get(
+            f"{SCHWALPACA_URL}/intel/earnings",
+            headers=headers,
+            params={"from_date": today, "to_date": end},
+            timeout=_TIMEOUT,
+        )
+        if r.ok:
+            return r.json()
+    except Exception as e:
+        print(f"  Warning: earnings fetch failed: {e}")
+    return None
+
+
+def earnings_to_markdown(earnings_data, held_symbols: set = None) -> str:
+    """Format earnings calendar as markdown, flagging held positions."""
+    if not earnings_data:
+        return ""
+
+    items = earnings_data if isinstance(earnings_data, list) else earnings_data.get("data", [])
+    if not items:
+        return ""
+
+    lines = []
+    for e in items[:20]:
+        if not isinstance(e, dict):
+            continue
+        sym = e.get("symbol", "?")
+        date = e.get("date", e.get("reportDate", "?"))
+        timing = e.get("timing", e.get("time", ""))
+        held_flag = " **[HELD]**" if held_symbols and sym in held_symbols else ""
+        lines.append(f"- **{sym}** — {date} {timing}{held_flag}")
+
+    if not lines:
+        return ""
+    return _section("Upcoming Earnings (next 7 days)", "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # Screener Ticker News (past 7 days)
 # ---------------------------------------------------------------------------
 
@@ -1389,6 +1517,53 @@ def main():
         if indicators_md:
             md += "\n" + indicators_md
             print(f"  Added indicators for {len(all_indicators)} symbols")
+
+    # Options flow for held positions + top screener/mover candidates
+    print("Fetching options flow (put/call ratio + unusual activity)...")
+    flow_symbols = set()
+    if held_symbols:
+        flow_symbols.update(held_symbols[:5] if isinstance(held_symbols, list) else list(held_symbols)[:5])
+    if screeners:
+        for key in ["near_52w_high", "unusual_volume", "strong_momentum"]:
+            for item in screeners.get(key, []):
+                sym = item.get("symbol")
+                if sym:
+                    flow_symbols.add(sym)
+    if movers:
+        for m in movers[:5]:
+            sym = m.get("symbol")
+            if sym:
+                flow_symbols.add(sym)
+    if flow_symbols:
+        all_flows = {}
+        for sym in list(flow_symbols)[:10]:
+            flow = fetch_option_flow(sym)
+            if flow:
+                all_flows[sym] = flow
+                print(f"  ✓ {sym}: P/C={flow.get('put_call_ratio_volume', '?')} [{flow.get('signal', '?')}]")
+            else:
+                print(f"  ✗ {sym}")
+        flow_md = options_flow_to_markdown(all_flows)
+        if flow_md:
+            md += "\n" + flow_md
+            print(f"  Added options flow for {len(all_flows)} symbols")
+    else:
+        print("  No symbols for options flow")
+
+    # Earnings calendar (next 7 days)
+    print("Fetching earnings calendar (next 7 days)...")
+    earnings = fetch_earnings(days_ahead=7)
+    if earnings:
+        held_set_for_earnings = set(held_symbols) if held_symbols else set()
+        earnings_md = earnings_to_markdown(earnings, held_set_for_earnings)
+        if earnings_md:
+            md += "\n" + earnings_md
+            items = earnings if isinstance(earnings, list) else earnings.get("data", [])
+            print(f"  {len(items)} earnings events in next 7 days")
+        else:
+            print("  No upcoming earnings")
+    else:
+        print("  Earnings data unavailable")
 
     # Write to temp file (or output dir for dry-run)
     if args.dry_run:
