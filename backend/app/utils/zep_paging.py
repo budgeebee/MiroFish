@@ -12,6 +12,7 @@ from typing import Any
 
 from zep_cloud import InternalServerError
 from zep_cloud.client import Zep
+from zep_cloud.core.api_error import ApiError
 
 from .logger import get_logger
 
@@ -21,6 +22,14 @@ _DEFAULT_PAGE_SIZE = 100
 _MAX_NODES = 2000
 _DEFAULT_MAX_RETRIES = 3
 _DEFAULT_RETRY_DELAY = 2.0  # seconds, doubles each retry
+
+
+def _get_retry_after(error: ApiError) -> float | None:
+    """Extract retry-after seconds from ApiError headers, or None if not present."""
+    try:
+        return float(error.headers.get("retry-after", ""))
+    except (ValueError, TypeError):
+        return None
 
 
 def _fetch_page_with_retry(
@@ -41,6 +50,19 @@ def _fetch_page_with_retry(
     for attempt in range(max_retries):
         try:
             return api_call(*args, **kwargs)
+        except ApiError as e:
+            last_exception = e
+            retry_after = _get_retry_after(e)
+            if attempt < max_retries - 1:
+                wait = (retry_after + 1) if retry_after else delay
+                logger.warning(
+                    f"Zep {page_description} attempt {attempt + 1} failed ({e.status_code}): {str(e)[:100]}, "
+                    f"retrying in {wait:.1f}s..."
+                )
+                time.sleep(wait)
+                delay *= 2
+            else:
+                logger.error(f"Zep {page_description} failed after {max_retries} attempts: {str(e)}")
         except (ConnectionError, TimeoutError, OSError, InternalServerError) as e:
             last_exception = e
             if attempt < max_retries - 1:

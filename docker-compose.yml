@@ -1,8 +1,40 @@
 services:
+  graphiti:
+    build:
+      context: /home/irvins/Projects/graphiti
+      args:
+        INSTALL_KUZU: "true"
+    container_name: graphiti_api
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthcheck')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    environment:
+      - KUZU_DB_PATH=/data/kuzu/graphiti.db
+      - PORT=8000
+      - db_backend=kuzu
+      - OPENAI_API_KEY=${LLM_API_KEY}
+      - OPENAI_BASE_URL=${LLM_BASE_URL}
+      - MODEL_NAME=${LLM_MODEL_NAME}
+      - EMBEDDING_MODEL_NAME=${LLM_EMBEDDING_MODEL_NAME:-}
+      - EMBEDDING_DIM=768
+    user: "0:0"
+    volumes:
+      - kuzu_data:/data/kuzu
+    networks:
+      - graphiti_network
+
   mirofish:
     build: .
-    # image: ghcr.io/666ghj/mirofish:latest
-    # image: ghcr.nju.edu.cn/666ghj/mirofish:latest
     container_name: mirofish
     env_file:
       - .env
@@ -10,6 +42,20 @@ services:
       - "3003:3000"
       - "5005:5001"
     restart: unless-stopped
+    depends_on:
+      graphiti:
+        condition: service_healthy
     volumes:
       - ./backend/uploads:/app/backend/uploads
       - ./backend/app:/app/backend/app
+      - ./locales:/app/locales
+    networks:
+      - graphiti_network
+
+volumes:
+  kuzu_data:
+
+networks:
+  graphiti_network:
+    name: graphiti_network
+    external: false

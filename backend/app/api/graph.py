@@ -459,7 +459,7 @@ def build_graph():
                         progress=progress
                     )
                 
-                builder._wait_for_episodes(episode_uuids, wait_progress_callback)
+                builder._wait_for_episodes(graph_id, episode_uuids, wait_progress_callback)
                 
                 # 获取图谱数据
                 task_manager.update_task(

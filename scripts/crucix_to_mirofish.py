@@ -1059,152 +1059,170 @@ def poll_task(task_id: str, label: str, endpoint: str = "/api/graph/task"):
         time.sleep(3)
 
 
-def run_pipeline(md_path: str, max_rounds: int, project_name: str):
-    """Drive the full MiroFish pipeline: ontology -> graph -> sim -> report."""
+def _state_path():
+    """Path to the pipeline checkpoint file."""
+    output_dir = Path(__file__).parent.parent / "output"
+    output_dir.mkdir(exist_ok=True)
+    return output_dir / ".pipeline_state.json"
+
+
+def _save_state(state: dict):
+    """Save pipeline checkpoint."""
+    state["updated_at"] = datetime.now().isoformat()
+    _state_path().write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def _load_state() -> dict | None:
+    """Load pipeline checkpoint, or None if no valid state."""
+    p = _state_path()
+    if not p.exists():
+        return None
+    try:
+        state = json.loads(p.read_text(encoding="utf-8"))
+        # Only resume today's runs
+        today = datetime.now().strftime("%Y-%m-%d")
+        if state.get("date") != today:
+            return None
+        return state
+    except (json.JSONDecodeError, KeyError):
+        return None
+
+
+def _clear_state():
+    """Remove checkpoint file after successful completion."""
+    p = _state_path()
+    if p.exists():
+        p.unlink()
+
+
+def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool = False):
+    """Drive the full MiroFish pipeline with checkpoint/resume support.
+
+    After each step, state is saved to .pipeline_state.json. If the pipeline
+    crashes, re-run with --resume to pick up from the last completed step.
+    """
     base = MIROFISH_URL
+
+    # Load checkpoint if resuming
+    state = _load_state() if resume else None
+    if state:
+        completed = state.get("completed_step", 0)
+        print(f"\n  Resuming from checkpoint — last completed step: {completed}/6")
+        print(f"  project_id:    {state.get('project_id')}")
+        print(f"  graph_id:      {state.get('graph_id')}")
+        print(f"  simulation_id: {state.get('simulation_id')}")
+    else:
+        state = {
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "completed_step": 0,
+            "md_path": md_path,
+            "max_rounds": max_rounds,
+            "project_name": project_name,
+        }
+        completed = 0
+
     print(f"\n{'='*60}")
     print(f"  MiroFish Pipeline — {project_name}")
     print(f"  Max rounds: {max_rounds}")
     print(f"  Backend: {base}")
+    if completed > 0:
+        print(f"  Resuming from step {completed + 1}")
     print(f"{'='*60}\n")
 
     # --- Step 1: Upload & generate ontology ---
-    print("[1/6] Uploading brief & generating ontology...")
-    with open(md_path, "rb") as f:
-        r = requests.post(
-            f"{base}/api/graph/ontology/generate",
-            files={"files": ("crucix_brief.md", f, "text/markdown")},
-            data={
-                "simulation_requirement": SIMULATION_REQUIREMENT,
-                "project_name": project_name,
-            },
-            timeout=300,
-        )
-    if not r.ok:
-        print(f"  HTTP {r.status_code}")
-        try:
-            print(f"  Response: {r.json()}")
-        except Exception:
-            print(f"  Response: {r.text[:500]}")
-        sys.exit(1)
-    resp = r.json()
-    if not resp.get("success"):
-        print(f"  FAILED: {resp.get('error')}")
-        if resp.get("traceback"):
-            print(f"  Traceback:\n{resp['traceback']}")
-        sys.exit(1)
-    project_id = resp["data"]["project_id"]
-    entity_types = len(resp["data"]["ontology"].get("entity_types", []))
-    edge_types = len(resp["data"]["ontology"].get("edge_types", []))
-    print(f"  OK: project={project_id}, {entity_types} entity types, {edge_types} edge types")
+    if completed < 1:
+        print("[1/6] Uploading brief & generating ontology...")
+        with open(md_path, "rb") as f:
+            r = requests.post(
+                f"{base}/api/graph/ontology/generate",
+                files={"files": ("crucix_brief.md", f, "text/markdown")},
+                data={
+                    "simulation_requirement": SIMULATION_REQUIREMENT,
+                    "project_name": project_name,
+                },
+                timeout=300,
+            )
+        if not r.ok:
+            print(f"  HTTP {r.status_code}")
+            try:
+                print(f"  Response: {r.json()}")
+            except Exception:
+                print(f"  Response: {r.text[:500]}")
+            sys.exit(1)
+        resp = r.json()
+        if not resp.get("success"):
+            print(f"  FAILED: {resp.get('error')}")
+            if resp.get("traceback"):
+                print(f"  Traceback:\n{resp['traceback']}")
+            sys.exit(1)
+        state["project_id"] = resp["data"]["project_id"]
+        entity_types = len(resp["data"]["ontology"].get("entity_types", []))
+        edge_types = len(resp["data"]["ontology"].get("edge_types", []))
+        print(f"  OK: project={state['project_id']}, {entity_types} entity types, {edge_types} edge types")
+        state["completed_step"] = 1
+        _save_state(state)
+    else:
+        print("[1/6] Uploading brief & generating ontology... (cached)")
+
+    project_id = state["project_id"]
 
     # --- Step 2: Build graph ---
-    print("\n[2/6] Building knowledge graph...")
-    r = requests.post(
-        f"{base}/api/graph/build",
-        json={"project_id": project_id},
-        timeout=30,
-    )
-    r.raise_for_status()
-    resp = r.json()
-    if not resp.get("success"):
-        print(f"  FAILED: {resp.get('error')}")
-        sys.exit(1)
-    task_id = resp["data"]["task_id"]
-    task_result = poll_task(task_id, "graph build")
-    graph_id = task_result.get("result", {}).get("graph_id")
-    print(f"  graph_id={graph_id}")
+    if completed < 2:
+        print("\n[2/6] Building knowledge graph...")
+        r = requests.post(
+            f"{base}/api/graph/build",
+            json={"project_id": project_id},
+            timeout=30,
+        )
+        r.raise_for_status()
+        resp = r.json()
+        if not resp.get("success"):
+            print(f"  FAILED: {resp.get('error')}")
+            sys.exit(1)
+        task_id = resp["data"]["task_id"]
+        task_result = poll_task(task_id, "graph build")
+        state["graph_id"] = task_result.get("result", {}).get("graph_id")
+        print(f"  graph_id={state['graph_id']}")
+        state["completed_step"] = 2
+        _save_state(state)
+    else:
+        print("[2/6] Building knowledge graph... (cached)")
+
+    graph_id = state["graph_id"]
 
     # --- Step 3: Create simulation ---
-    print("\n[3/6] Creating simulation...")
-    r = requests.post(
-        f"{base}/api/simulation/create",
-        json={
-            "project_id": project_id,
-            "graph_id": graph_id,
-            "enable_twitter": True,
-            "enable_reddit": True,
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
-    resp = r.json()
-    if not resp.get("success"):
-        print(f"  FAILED: {resp.get('error')}")
-        sys.exit(1)
-    simulation_id = resp["data"]["simulation_id"]
-    print(f"  OK: simulation_id={simulation_id}")
+    if completed < 3:
+        print("\n[3/6] Creating simulation...")
+        r = requests.post(
+            f"{base}/api/simulation/create",
+            json={
+                "project_id": project_id,
+                "graph_id": graph_id,
+                "enable_twitter": True,
+                "enable_reddit": True,
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        resp = r.json()
+        if not resp.get("success"):
+            print(f"  FAILED: {resp.get('error')}")
+            sys.exit(1)
+        state["simulation_id"] = resp["data"]["simulation_id"]
+        print(f"  OK: simulation_id={state['simulation_id']}")
+        state["completed_step"] = 3
+        _save_state(state)
+    else:
+        print("[3/6] Creating simulation... (cached)")
+
+    simulation_id = state["simulation_id"]
 
     # --- Step 4: Prepare simulation ---
-    print("\n[4/6] Preparing simulation (generating agent profiles & config)...")
-    r = requests.post(
-        f"{base}/api/simulation/prepare",
-        json={"simulation_id": simulation_id},
-        timeout=30,
-    )
-    r.raise_for_status()
-    resp = r.json()
-    if not resp.get("success"):
-        print(f"  FAILED: {resp.get('error')}")
-        sys.exit(1)
-
-    if resp["data"].get("already_prepared"):
-        print("  OK: already prepared (reusing)")
-    else:
-        task_id = resp["data"]["task_id"]
-        poll_task(task_id, "prepare sim", endpoint="/api/graph/task")
-
-    # --- Step 5: Start simulation ---
-    print(f"\n[5/6] Running simulation (max {max_rounds} rounds)...")
-    r = requests.post(
-        f"{base}/api/simulation/start",
-        json={
-            "simulation_id": simulation_id,
-            "platform": "parallel",
-            "max_rounds": max_rounds,
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
-    resp = r.json()
-    if not resp.get("success"):
-        print(f"  FAILED: {resp.get('error')}")
-        sys.exit(1)
-    print(f"  OK: simulation running (pid={resp['data'].get('process_pid')})")
-
-    # Poll simulation status
-    spinner = ["|", "/", "-", "\\"]
-    i = 0
-    while True:
-        r = requests.get(f"{base}/api/simulation/{simulation_id}/run-status", timeout=30)
-        r.raise_for_status()
-        status_data = r.json().get("data", {})
-        runner_status = status_data.get("runner_status", "unknown")
-        current = status_data.get("current_round", 0)
-        total = status_data.get("total_rounds", "?")
-        pct = status_data.get("progress_percent", 0)
-
-        sys.stdout.write(f"\r  {spinner[i % 4]} [simulation] {runner_status} round {current}/{total} ({pct}%)   ")
-        sys.stdout.flush()
-        i += 1
-
-        if runner_status in ("completed", "stopped"):
-            print(f"\n  OK: simulation {runner_status}.")
-            break
-        elif runner_status == "failed":
-            print(f"\n  FAILED: simulation failed")
-            sys.exit(1)
-
-        time.sleep(5)
-
-    # --- Step 6: Generate report (with retry for rate limits) ---
-    max_report_retries = 3
-    report_id = None
-    for report_attempt in range(max_report_retries):
-        print(f"\n[6/6] Generating prediction report{f' (retry {report_attempt})' if report_attempt else ''}...")
+    if completed < 4:
+        print("\n[4/6] Preparing simulation (generating agent profiles & config)...")
         r = requests.post(
-            f"{base}/api/report/generate",
-            json={"simulation_id": simulation_id, "force_regenerate": report_attempt > 0},
+            f"{base}/api/simulation/prepare",
+            json={"simulation_id": simulation_id},
             timeout=30,
         )
         r.raise_for_status()
@@ -1213,24 +1231,107 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str):
             print(f"  FAILED: {resp.get('error')}")
             sys.exit(1)
 
-        report_id = resp["data"].get("report_id")
-        if resp["data"].get("already_generated"):
-            print(f"  OK: report already exists: {report_id}")
-            break
-
-        task_id = resp["data"]["task_id"]
-        task_result = poll_task(task_id, "report gen", endpoint="/api/graph/task")
-        if task_result.get("status") in ("completed", "COMPLETED"):
-            break
-
-        # Task failed — likely rate limit, wait and retry
-        if report_attempt < max_report_retries - 1:
-            wait = 60 * (report_attempt + 1)
-            print(f"  Waiting {wait}s before retry (rate limit cooldown)...")
-            time.sleep(wait)
+        if resp["data"].get("already_prepared"):
+            print("  OK: already prepared (reusing)")
         else:
-            print(f"  Report generation failed after {max_report_retries} attempts.")
+            task_id = resp["data"]["task_id"]
+            poll_task(task_id, "prepare sim", endpoint="/api/graph/task")
+        state["completed_step"] = 4
+        _save_state(state)
+    else:
+        print("[4/6] Preparing simulation... (cached)")
+
+    # --- Step 5: Start simulation ---
+    if completed < 5:
+        print(f"\n[5/6] Running simulation (max {max_rounds} rounds)...")
+        r = requests.post(
+            f"{base}/api/simulation/start",
+            json={
+                "simulation_id": simulation_id,
+                "platform": "parallel",
+                "max_rounds": max_rounds,
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        resp = r.json()
+        if not resp.get("success"):
+            print(f"  FAILED: {resp.get('error')}")
             sys.exit(1)
+        print(f"  OK: simulation running (pid={resp['data'].get('process_pid')})")
+
+        # Poll simulation status
+        spinner = ["|", "/", "-", "\\"]
+        i = 0
+        while True:
+            r = requests.get(f"{base}/api/simulation/{simulation_id}/run-status", timeout=30)
+            r.raise_for_status()
+            status_data = r.json().get("data", {})
+            runner_status = status_data.get("runner_status", "unknown")
+            current = status_data.get("current_round", 0)
+            total = status_data.get("total_rounds", "?")
+            pct = status_data.get("progress_percent", 0)
+
+            sys.stdout.write(f"\r  {spinner[i % 4]} [simulation] {runner_status} round {current}/{total} ({pct}%)   ")
+            sys.stdout.flush()
+            i += 1
+
+            if runner_status in ("completed", "stopped"):
+                print(f"\n  OK: simulation {runner_status}.")
+                break
+            elif runner_status == "failed":
+                print(f"\n  FAILED: simulation failed")
+                sys.exit(1)
+
+            time.sleep(5)
+
+        state["completed_step"] = 5
+        _save_state(state)
+    else:
+        print("[5/6] Running simulation... (cached)")
+
+    # --- Step 6: Generate report (with retry for rate limits) ---
+    if completed < 6:
+        max_report_retries = 3
+        report_id = None
+        for report_attempt in range(max_report_retries):
+            print(f"\n[6/6] Generating prediction report{f' (retry {report_attempt})' if report_attempt else ''}...")
+            r = requests.post(
+                f"{base}/api/report/generate",
+                json={"simulation_id": simulation_id, "force_regenerate": report_attempt > 0},
+                timeout=30,
+            )
+            r.raise_for_status()
+            resp = r.json()
+            if not resp.get("success"):
+                print(f"  FAILED: {resp.get('error')}")
+                sys.exit(1)
+
+            report_id = resp["data"].get("report_id")
+            if resp["data"].get("already_generated"):
+                print(f"  OK: report already exists: {report_id}")
+                break
+
+            task_id = resp["data"]["task_id"]
+            task_result = poll_task(task_id, "report gen", endpoint="/api/graph/task")
+            if task_result.get("status") in ("completed", "COMPLETED"):
+                break
+
+            # Task failed — likely rate limit, wait and retry
+            if report_attempt < max_report_retries - 1:
+                wait = 60 * (report_attempt + 1)
+                print(f"  Waiting {wait}s before retry (rate limit cooldown)...")
+                time.sleep(wait)
+            else:
+                print(f"  Report generation failed after {max_report_retries} attempts.")
+                sys.exit(1)
+
+        state["report_id"] = report_id
+        state["completed_step"] = 6
+        _save_state(state)
+    else:
+        report_id = state.get("report_id")
+        print("[6/6] Generating prediction report... (cached)")
 
     # Fetch the report
     r = requests.get(f"{base}/api/report/{report_id}", timeout=30)
@@ -1239,7 +1340,7 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str):
 
     print(f"\n{'='*60}")
     print(f"  DONE")
-    print(f"  Project:    {project_id}")
+    print(f"  Project:    {state['project_id']}")
     print(f"  Simulation: {simulation_id}")
     print(f"  Report:     {report_id}")
     print(f"{'='*60}")
@@ -1261,8 +1362,11 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str):
     brief_out.write_text(Path(md_path).read_text(encoding="utf-8"), encoding="utf-8")
     print(f"  Brief saved: {brief_out}")
 
+    # Clean up checkpoint on success
+    _clear_state()
+
     return {
-        "project_id": project_id,
+        "project_id": state["project_id"],
         "simulation_id": simulation_id,
         "report_id": report_id,
         "report_path": str(report_path),
@@ -1281,7 +1385,27 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Just generate markdown, don't run simulation")
     parser.add_argument("--project-name", default=None, help="Override project name")
     parser.add_argument("--no-news", action="store_true", help="Skip news-aggregator fetch")
+    parser.add_argument("--resume", action="store_true", help="Resume from last checkpoint (skips data gathering)")
     args = parser.parse_args()
+
+    # Resume mode — skip data gathering, jump straight to pipeline
+    if args.resume:
+        state = _load_state()
+        if not state:
+            print("No valid checkpoint found for today. Run without --resume first.")
+            sys.exit(1)
+        md_path = state.get("md_path")
+        if not md_path or not os.path.exists(md_path):
+            print(f"Checkpoint brief not found at {md_path}. Run without --resume.")
+            sys.exit(1)
+        print(f"Resuming pipeline from step {state['completed_step'] + 1}/6...")
+        run_pipeline(
+            md_path,
+            state.get("max_rounds", args.max_rounds),
+            state.get("project_name", "Crucix Trading Intel"),
+            resume=True,
+        )
+        return
 
     # Load Crucix data
     json_path = args.crucix_json
@@ -1577,16 +1701,15 @@ def main():
         print(md[:2000])
         return
 
-    # Write temp file for upload
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
-        f.write(md)
-        md_path = f.name
+    # Write brief to stable path (survives crashes for --resume)
+    output_dir = Path(__file__).parent.parent / "output"
+    output_dir.mkdir(exist_ok=True)
+    today = datetime.now().strftime("%Y%m%d")
+    md_path = str(output_dir / f".brief_{today}.md")
+    Path(md_path).write_text(md, encoding="utf-8")
 
-    try:
-        project_name = args.project_name or f"Crucix Trading Intel {sweep_ts[:10]}"
-        run_pipeline(md_path, args.max_rounds, project_name)
-    finally:
-        os.unlink(md_path)
+    project_name = args.project_name or f"Crucix Trading Intel {sweep_ts[:10]}"
+    run_pipeline(md_path, args.max_rounds, project_name)
 
 
 if __name__ == "__main__":
