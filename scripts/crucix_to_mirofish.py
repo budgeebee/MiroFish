@@ -1260,10 +1260,17 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
             sys.exit(1)
         print(f"  OK: simulation running (pid={resp['data'].get('process_pid')})")
 
-        # Poll simulation status
+        # Poll simulation status (90-minute wall-clock timeout)
         spinner = ["|", "/", "-", "\\"]
         i = 0
+        poll_start = time.time()
+        MAX_SIM_SECONDS = 90 * 60
         while True:
+            elapsed_min = (time.time() - poll_start) / 60
+            if time.time() - poll_start > MAX_SIM_SECONDS:
+                print(f"\n  TIMEOUT: simulation exceeded 90 min ({current}/{total} rounds) — proceeding with partial results")
+                break
+
             r = requests.get(f"{base}/api/simulation/{simulation_id}/run-status", timeout=30)
             r.raise_for_status()
             status_data = r.json().get("data", {})
@@ -1272,7 +1279,7 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
             total = status_data.get("total_rounds", "?")
             pct = status_data.get("progress_percent", 0)
 
-            sys.stdout.write(f"\r  {spinner[i % 4]} [simulation] {runner_status} round {current}/{total} ({pct}%)   ")
+            sys.stdout.write(f"\r  {spinner[i % 4]} [simulation] {runner_status} round {current}/{total} ({pct}%) {elapsed_min:.0f}m   ")
             sys.stdout.flush()
             i += 1
 

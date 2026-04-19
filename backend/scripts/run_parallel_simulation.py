@@ -1251,13 +1251,19 @@ async def run_twitter_simulation(
             continue
         
         actions = {agent: LLMAction() for _, agent in active_agents}
-        await result.env.step(actions)
-        
+        try:
+            await asyncio.wait_for(result.env.step(actions), timeout=180)
+        except asyncio.TimeoutError:
+            log_info(f"Round {round_num + 1} timed out after 3 min — skipping")
+            if action_logger:
+                action_logger.log_round_end(round_num + 1, 0)
+            continue
+
         # 从数据库获取实际执行的动作并记录
         actual_actions, last_rowid = fetch_new_actions_from_db(
             db_path, last_rowid, agent_names
         )
-        
+
         round_action_count = 0
         for action_data in actual_actions:
             if action_logger:
@@ -1270,23 +1276,23 @@ async def run_twitter_simulation(
                 )
                 total_actions += 1
                 round_action_count += 1
-        
+
         if action_logger:
             action_logger.log_round_end(round_num + 1, round_action_count)
-        
+
         if (round_num + 1) % 20 == 0:
             progress = (round_num + 1) / total_rounds * 100
             log_info(f"Day {simulated_day}, {simulated_hour:02d}:00 - Round {round_num + 1}/{total_rounds} ({progress:.1f}%)")
-    
+
     # 注意：不关闭环境，保留给Interview使用
-    
+
     if action_logger:
         action_logger.log_simulation_end(total_rounds, total_actions)
-    
+
     result.total_actions = total_actions
     elapsed = (datetime.now() - start_time).total_seconds()
     log_info(f"模拟循环完成! 耗时: {elapsed:.1f}秒, 总动作: {total_actions}")
-    
+
     return result
 
 
@@ -1450,13 +1456,19 @@ async def run_reddit_simulation(
             continue
         
         actions = {agent: LLMAction() for _, agent in active_agents}
-        await result.env.step(actions)
-        
+        try:
+            await asyncio.wait_for(result.env.step(actions), timeout=180)
+        except asyncio.TimeoutError:
+            log_info(f"Round {round_num + 1} timed out after 3 min — skipping")
+            if action_logger:
+                action_logger.log_round_end(round_num + 1, 0)
+            continue
+
         # 从数据库获取实际执行的动作并记录
         actual_actions, last_rowid = fetch_new_actions_from_db(
             db_path, last_rowid, agent_names
         )
-        
+
         round_action_count = 0
         for action_data in actual_actions:
             if action_logger:
@@ -1469,23 +1481,23 @@ async def run_reddit_simulation(
                 )
                 total_actions += 1
                 round_action_count += 1
-        
+
         if action_logger:
             action_logger.log_round_end(round_num + 1, round_action_count)
-        
+
         if (round_num + 1) % 20 == 0:
             progress = (round_num + 1) / total_rounds * 100
             log_info(f"Day {simulated_day}, {simulated_hour:02d}:00 - Round {round_num + 1}/{total_rounds} ({progress:.1f}%)")
-    
+
     # 注意：不关闭环境，保留给Interview使用
-    
+
     if action_logger:
         action_logger.log_simulation_end(total_rounds, total_actions)
-    
+
     result.total_actions = total_actions
     elapsed = (datetime.now() - start_time).total_seconds()
     log_info(f"模拟循环完成! 耗时: {elapsed:.1f}秒, 总动作: {total_actions}")
-    
+
     return result
 
 
@@ -1516,8 +1528,8 @@ async def main():
     parser.add_argument(
         '--no-wait',
         action='store_true',
-        default=False,
-        help='模拟完成后立即关闭环境，不进入等待命令模式'
+        default=True,
+        help='模拟完成后立即关闭环境，不进入等待命令模式 (default: True)'
     )
     
     args = parser.parse_args()
