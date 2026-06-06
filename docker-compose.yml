@@ -53,6 +53,29 @@ services:
     networks:
       - graphiti_network
 
+  mirofish-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: mirofish-api
+    env_file:
+      - .env
+    environment:
+      - MIROFISH_DIR=/data
+      - MIROFISH_OUTPUT_DIR=/data/output
+      - MIROFISH_URL=http://mirofish:5001
+      - CRUCIX_LATEST=/crucix/runs/latest.json
+    ports:
+      - "5010:5010"
+    volumes:
+      - ./output:/data/output
+      - ./scripts:/data/scripts
+      - /home/irvins/Projects/Crucix/runs:/crucix/runs:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    networks:
+      - graphiti_network
+
 volumes:
   kuzu_data:
 
