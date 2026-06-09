@@ -5,6 +5,7 @@ import glob
 import json
 import os
 import subprocess
+import threading
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -91,6 +92,15 @@ def launch(resume=False):
             stderr=subprocess.STDOUT, start_new_session=True,
         )
     PIDFILE.write_text(str(proc.pid))
+
+    def _wait_and_cleanup(p):
+        p.wait()
+        try:
+            PIDFILE.unlink()
+        except FileNotFoundError:
+            pass
+
+    threading.Thread(target=_wait_and_cleanup, args=(proc,), daemon=True).start()
     result = {"launched": True, "pid": proc.pid, "log": str(log), "resume": resume}
     if killed:
         result["zombie_sims_killed"] = killed
