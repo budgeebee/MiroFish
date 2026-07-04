@@ -5,6 +5,7 @@ HTTP client that replaces zep_cloud for MiroFish.
 Calls the graphiti REST API server instead of Zep Cloud.
 """
 
+import os
 import time
 from typing import Any
 
@@ -19,9 +20,21 @@ class GraphitiClient:
     Replaces zep_cloud.client.Zep.
     """
 
-    def __init__(self, api_key: str | None = None, base_url: str = "http://localhost:8000"):
+    def __init__(self, api_key: str | None = None, base_url: str | None = None):
         self.api_key = api_key or Config.LLM_API_KEY
-        self.base_url = base_url.rstrip("/")
+        # Resolve base_url in this priority:
+        #   1. explicit arg
+        #   2. GRAPHITI_URL env var
+        #   3. Config.GRAPHITI_URL
+        #   4. localhost:8000 (will fail in container unless graphiti is host-mapped)
+        if base_url:
+            self.base_url = base_url.rstrip("/")
+        else:
+            self.base_url = (
+                os.environ.get("GRAPHITI_URL")
+                or getattr(Config, "GRAPHITI_URL", None)
+                or "http://localhost:8000"
+            ).rstrip("/")
         self.timeout = 60
 
     def _headers(self) -> dict:

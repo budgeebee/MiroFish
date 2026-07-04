@@ -293,13 +293,23 @@ class ZepGraphMemoryUpdater:
     def stop(self):
         """停止后台工作线程"""
         self._running = False
-        
-        # 发送剩余的活动
-        self._flush_remaining()
-        
+
+        # 发送剩余的活动 — 但设超时防止 graphiti 调用挂住整个监控线程
+        # Discovered 2026-07-04: graphiti_client 默认 base_url=localhost:8000
+        # 在容器内部是 mirofish-api 自身，导致 Connection refused 循环重试
+        try:
+            import threading
+            flush_thread = threading.Thread(target=self._flush_remaining, daemon=True)
+            flush_thread.start()
+            flush_thread.join(timeout=10)
+            if flush_thread.is_alive():
+                logger.warning(f"graphiti flush 超时 10s — 跳过剩余活动刷新 (下次启动时补发)")
+        except Exception as e:
+            logger.warning(f"graphiti flush 异常: {e}")
+
         if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=10)
-        
+
         logger.info(f"ZepGraphMemoryUpdater 已停止: graph_id={self.graph_id}, "
                    f"total_activities={self._total_activities}, "
                    f"batches_sent={self._total_sent}, "
