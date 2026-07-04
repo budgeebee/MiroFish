@@ -11,7 +11,7 @@ Usage:
     python3 scripts/crucix_to_mirofish.py --dry-run           # just generate the markdown, don't run
 
 Environment:
-    MIROFISH_URL        MiroFish backend (default: http://localhost:5005)
+    MIROFISH_URL        MiroFish graph/simulation API (default: http://mirofish:5001)
     CRUCIX_LATEST       Path to latest.json (default: ~/Projects/Crucix/runs/latest.json)
 """
 
@@ -31,7 +31,7 @@ import requests
 # Saves ~1-2s per MiroFish pipeline run vs opening a new TCP+TLS handshake per call.
 _session = requests.Session()
 
-MIROFISH_URL = os.getenv("MIROFISH_URL", "http://localhost:5005")
+MIROFISH_URL = os.getenv("MIROFISH_URL", "http://mirofish:5001")
 CRUCIX_LATEST = os.getenv(
     "CRUCIX_LATEST",
     os.path.expanduser("~/Projects/Crucix/runs/latest.json"),
