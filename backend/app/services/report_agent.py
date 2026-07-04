@@ -1705,6 +1705,27 @@ class ReportAgent:
             
             # 使用ReportManager组装完整报告
             report.markdown_content = ReportManager.assemble_full_report(report_id, outline)
+
+            # ── Extract structured trading signals ──────────────────────
+            # The LLM that wrote the report already knows the directional
+            # signals — "gold crashed 3.58%", "WTI plunged 5.21%", etc.
+            # Ask it to output those as structured JSON so downstream
+            # consumers (schwalpaca, kalshimarket) can use them directly
+            # instead of regex-matching Chinese/English text.
+            try:
+                signals = self._extract_trading_signals(report.markdown_content)
+                if signals:
+                    signals_block = (
+                        "\n\n## Trading Signals (Structured)\n\n"
+                        "```json\n"
+                        + json.dumps(signals, ensure_ascii=False, indent=2)
+                        + "\n```\n"
+                    )
+                    report.markdown_content += signals_block
+                    logger.info(f"Extracted {len(signals.get('signals', []))} trading signals")
+            except Exception as e:
+                logger.warning(f"Trading signal extraction failed (non-fatal): {e}")
+
             report.status = ReportStatus.COMPLETED
             report.completed_at = datetime.now().isoformat()
             
@@ -1763,6 +1784,73 @@ class ReportAgent:
             
             return report
     
+    def _extract_trading_signals(self, report_text: str) -> Optional[Dict[str, Any]]:
+        """Extract structured trading signals from a completed report.
+
+        The LLM that wrote the report already knows the directions — this
+        method asks it to output them as structured JSON so downstream
+        consumers (schwalpaca, kalshimarket) don't need to regex Chinese text.
+
+        Returns a dict with a 'signals' list, or None on failure.
+        """
+        # Truncate to keep the LLM call fast — the first 8K chars contain
+        # the most actionable signals (early chapters are the strongest).
+        truncated = report_text[:8000] if len(report_text) > 8000 else report_text
+
+        system_prompt = (
+            "You are a trading signal extraction engine. "
+            "Given a market prediction report, extract structured trading signals. "
+            "Output ONLY valid JSON, no commentary."
+        )
+
+        user_prompt = f"""Analyze this prediction report and extract trading signals.
+
+For each asset/commodity/security mentioned with a directional view, create an entry.
+
+Report:
+---
+{truncated}
+---
+
+Output JSON in this exact format:
+{{
+  "signals": [
+    {{
+      "asset": "WTI Crude Oil",
+      "ticker_hint": "WTI",
+      "category": "energy",
+      "direction": "bullish",
+      "confidence": "strong",
+      "reasoning": "brief explanation of the directional view"
+    }}
+  ]
+}}
+
+Valid categories: energy, metals, crypto, finance, economics, geopolitics, politics, weather, tech
+Valid directions: bullish, bearish, neutral
+Valid confidence: strong, moderate, weak
+
+Only include assets where the report expresses a clear directional view.
+If the report is neutral on an asset, set direction to "neutral".
+Extract ALL assets mentioned with any directional signal — energy, metals, crypto, equities, bonds, etc.
+"""
+
+        try:
+            response = self.llm.chat_json(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=2048
+            )
+            if isinstance(response, dict) and "signals" in response:
+                return response
+            return None
+        except Exception as e:
+            logger.warning(f"Signal extraction LLM call failed: {e}")
+            return None
+
     def chat(
         self, 
         message: str,

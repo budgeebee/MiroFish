@@ -65,6 +65,7 @@ services:
       - MIROFISH_OUTPUT_DIR=/data/output
       - MIROFISH_URL=http://mirofish:5001
       - CRUCIX_LATEST=/crucix/runs/latest.json
+      - NEWS_AGGREGATOR_URL=http://news-aggregator:8000
     ports:
       - "5010:5010"
     volumes:
