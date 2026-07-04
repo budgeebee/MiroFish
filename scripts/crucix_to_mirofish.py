@@ -1451,6 +1451,13 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
         i = 0
         poll_start = time.time()
         MAX_SIM_SECONDS = 90 * 60
+        # Watchdog: if status doesn't change for STALE_POLL_SECONDS, treat as hung.
+        # Catches the architectural gap where the simulation child dies but the
+        # API's in-memory status stays "running" forever (orchestrator never
+        # sees the failure). Discovered 2026-07-04.
+        STALE_POLL_SECONDS = 10 * 60
+        last_state_change = time.time()
+        last_signature = None
         while True:
             elapsed_min = (time.time() - poll_start) / 60
             if time.time() - poll_start > MAX_SIM_SECONDS:
@@ -1472,6 +1479,22 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
                 i += 1
                 time.sleep(5)
                 continue
+
+            # Watchdog: detect stale status (no progress for too long).
+            # This catches the case where the simulation child process dies but
+            # the API's in-memory state still says "running" because the
+            # monitor thread's state updates don't propagate to the orchestrator.
+            signature = (runner_status, current, total, pct)
+            if signature != last_signature:
+                last_signature = signature
+                last_state_change = time.time()
+            elif (time.time() - last_state_change) > STALE_POLL_SECONDS:
+                print(f"\n  WATCHDOG: simulation status unchanged for {STALE_POLL_SECONDS//60} min "
+                      f"(state={signature}). Child process likely died without status update.")
+                print(f"  This catches the architectural gap where mirofish-api simulation state")
+                print(f"  is stale because the actual simulation process died but the API doesn't")
+                print(f"  know. Failing fast rather than waiting 90 min for the hard timeout.")
+                sys.exit(2)  # distinct exit code so cron can detect "hung vs failed"
 
             sys.stdout.write(f"\r  {spinner[i % 4]} [simulation] {runner_status} round {current}/{total} ({pct}%) {elapsed_min:.0f}m   ")
             sys.stdout.flush()
