@@ -158,9 +158,16 @@ class SimulationRunState:
         self.updated_at = datetime.now().isoformat()
     
     def to_dict(self) -> Dict[str, Any]:
+        # runner_status can be a RunnerStatus enum or a string (e.g. "process_died"
+        # when the PID liveness check detects a dead worker — added 2026-07-04).
+        # Handle both cases so the API doesn't 500 on the saved state.
         return {
             "simulation_id": self.simulation_id,
-            "runner_status": self.runner_status.value,
+            "runner_status": (
+                self.runner_status.value
+                if hasattr(self.runner_status, "value")
+                else self.runner_status
+            ),
             "current_round": self.current_round,
             "total_rounds": self.total_rounds,
             "simulated_hours": self.simulated_hours,
@@ -231,12 +238,41 @@ class SimulationRunner:
     def get_run_state(cls, simulation_id: str) -> Optional[SimulationRunState]:
         """获取运行状态"""
         if simulation_id in cls._run_states:
-            return cls._run_states[simulation_id]
-        
-        # 尝试从文件加载
-        state = cls._load_run_state(simulation_id)
-        if state:
-            cls._run_states[simulation_id] = state
+            state = cls._run_states[simulation_id]
+        else:
+            # 尝试从文件加载
+            state = cls._load_run_state(simulation_id)
+            if state:
+                cls._run_states[simulation_id] = state
+            else:
+                return None
+
+        # Out-of-band liveness check via PID file (Discovered 2026-07-04).
+        # If state says "running" but the worker PID is dead, the monitor thread
+        # failed to update state (silent crash or hang). Mark as failed so
+        # the orchestrator's polling loop breaks out instead of waiting 90 min.
+        if state and state.runner_status == RunnerStatus.RUNNING and state.process_pid:
+            try:
+                import os as _os, signal as _signal
+                _os.kill(state.process_pid, 0)  # signal 0 = check existence only
+            except (OSError, ProcessLookupError):
+                # PID is dead but state still says running
+                logger.warning(
+                    f"PID liveness check failed: sim={simulation_id}, "
+                    f"pid={state.process_pid} dead but state=running — "
+                    f"marking as process_died"
+                )
+                state.runner_status = "process_died"
+                from datetime import datetime as _dt
+                state.error = (
+                    f"Worker process {state.process_pid} died without "
+                    f"state update (monitor thread likely crashed or hung)"
+                )
+                state.updated_at = _dt.now().isoformat()
+                cls._save_run_state(state)
+            except Exception as e:
+                logger.debug(f"PID check error (non-fatal): {e}")
+
         return state
     
     @classmethod
@@ -450,11 +486,30 @@ class SimulationRunner:
             # 保存文件句柄以便后续关闭
             cls._stdout_files[simulation_id] = main_log_file
             cls._stderr_files[simulation_id] = None  # 不再需要单独的 stderr
-            
+
             state.process_pid = process.pid
             state.runner_status = RunnerStatus.RUNNING
             cls._processes[simulation_id] = process
             cls._save_run_state(state)
+
+            # Write PID file for out-of-band liveness check (Discovered 2026-07-04).
+            # The status endpoint reads this to detect "monitor thread died but
+            # state still says running" — the silent failure mode where
+            # orchestrator polls forever waiting for a status update that
+            # never comes. With the PID file, even if the monitor thread
+            # crashes, the next status poll detects the dead process and
+            # marks the simulation as failed.
+            try:
+                import os as _os
+                pid_dir = _os.path.join(cls.RUN_STATE_DIR, simulation_id)
+                _os.makedirs(pid_dir, exist_ok=True)
+                pid_file = _os.path.join(pid_dir, "worker.pid")
+                with open(pid_file, "w") as f:
+                    f.write(str(process.pid))
+                logger.debug(f"Wrote PID file: {pid_file} (pid={process.pid})")
+            except Exception as pid_err:
+                # PID file is best-effort — don't fail the simulation start
+                logger.warning(f"Failed to write PID file: {pid_err}")
             
             # Capture locale before spawning monitor thread
             current_locale = get_locale()

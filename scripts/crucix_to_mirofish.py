@@ -1503,8 +1503,15 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
             if runner_status in ("completed", "stopped"):
                 print(f"\n  OK: simulation {runner_status}.")
                 break
-            elif runner_status == "failed":
-                print(f"\n  FAILED: simulation failed")
+            elif runner_status in ("failed", "process_died"):
+                # process_died: API's PID liveness check detected worker died
+                # without state update (PID file in <sim_id>/worker.pid was dead).
+                # Treat as a hard failure — no point continuing to step 6.
+                if runner_status == "process_died":
+                    print(f"\n  FAILED: simulation worker process died unexpectedly (state still says 'running' but PID is dead)")
+                    print(f"  This is the silent-hang mode the PID liveness check catches.")
+                else:
+                    print(f"\n  FAILED: simulation failed")
                 sys.exit(1)
 
             time.sleep(5)
