@@ -1360,6 +1360,22 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
             json={"project_id": project_id},
             timeout=30,
         )
+        # Discovered 2026-07-05: graph build returns 400 when the project was
+        # never fully created (step 1 failed with empty LLM response). The
+        # auto-resume logic kept the project_id in the checkpoint, but the
+        # OASIS backend doesn't have the project. Detect this and restart
+        # from step 1 (clear the partial checkpoint) rather than crash.
+        if r.status_code == 400:
+            error_body = r.text[:300] if hasattr(r, 'text') else '(no body)'
+            print(f"  graph build 400: {error_body}")
+            print(f"  Project {project_id} likely not fully created — restarting from step 1")
+            state["completed_step"] = 0  # clear partial
+            state["project_id"] = None
+            state["graph_id"] = None
+            state["simulation_id"] = None
+            _save_state(state)
+            print(f"  checkpoint cleared — re-run with --resume to retry from step 1")
+            sys.exit(1)
         r.raise_for_status()
         resp = r.json()
         if not resp.get("success"):
