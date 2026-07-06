@@ -83,7 +83,7 @@ def launch(resume=False):
         raise HTTPException(500, f"Pipeline script not found: {script}")
     killed = kill_zombie_sims()
     log = OUTPUT_DIR / ".mirofish_run.log"
-    cmd = ["python3", str(script), "--max-rounds", "40"]
+    cmd = ["python3", str(script), "--max-rounds", "30"]
     if resume:
         cmd.append("--resume")
     with open(log, "w") as f:
