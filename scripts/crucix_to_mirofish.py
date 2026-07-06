@@ -1355,16 +1355,22 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
     # --- Step 2: Build graph ---
     if completed < 2:
         print("\n[2/6] Building knowledge graph...")
-        r = _session.post(
-            f"{base}/api/graph/build",
-            json={"project_id": project_id},
-            timeout=30,
-        )
-        # Discovered 2026-07-05: graph build returns 400 when the project was
-        # never fully created (step 1 failed with empty LLM response). The
-        # auto-resume logic kept the project_id in the checkpoint, but the
-        # OASIS backend doesn't have the project. Detect this and restart
-        # from step 1 (clear the partial checkpoint) rather than crash.
+        # Smart 400 retry (Discovered 2026-07-05): backend can return 400
+        # transiently (e.g., during startup when Flask is still loading
+        # blueprints). Retry once with 5s delay before treating as fatal.
+        r = None
+        for attempt in range(2):
+            r = _session.post(
+                f"{base}/api/graph/build",
+                json={"project_id": project_id},
+                timeout=30,
+            )
+            if r.status_code == 400 and attempt == 0:
+                print(f"  graph build 400 on attempt 1 — retrying in 5s (transient?)")
+                time.sleep(5)
+                continue
+            break
+        # 400 after retry = genuine stale state (project not in backend)
         if r.status_code == 400:
             error_body = r.text[:300] if hasattr(r, 'text') else '(no body)'
             print(f"  graph build 400: {error_body}")
@@ -1446,15 +1452,33 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
     # --- Step 5: Start simulation ---
     if completed < 5:
         print(f"\n[5/6] Running simulation (max {max_rounds} rounds)...")
-        r = _session.post(
-            f"{base}/api/simulation/start",
-            json={
-                "simulation_id": simulation_id,
-                "platform": "parallel",
-                "max_rounds": max_rounds,
-            },
-            timeout=30,
-        )
+        # Smart 400 retry: same pattern as step 2 (Discovered 2026-07-05)
+        r = None
+        for attempt in range(2):
+            r = _session.post(
+                f"{base}/api/simulation/start",
+                json={
+                    "simulation_id": simulation_id,
+                    "platform": "parallel",
+                    "max_rounds": max_rounds,
+                },
+                timeout=30,
+            )
+            if r.status_code == 400 and attempt == 0:
+                print(f"  simulation/start 400 on attempt 1 — retrying in 5s (transient?)")
+                time.sleep(5)
+                continue
+            break
+        # 400 after retry = genuine stale state (simulation_id not in backend)
+        if r.status_code == 400:
+            error_body = r.text[:300] if hasattr(r, 'text') else '(no body)'
+            print(f"  simulation/start 400: {error_body}")
+            print(f"  simulation_id {simulation_id} likely doesn't exist in current backend — re-creating")
+            state["completed_step"] = 2  # back to before simulation create
+            state["simulation_id"] = None
+            _save_state(state)
+            print(f"  checkpoint adjusted — re-run with --resume to recreate simulation")
+            sys.exit(1)
         r.raise_for_status()
         resp = r.json()
         if not resp.get("success"):

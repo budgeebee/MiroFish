@@ -47,6 +47,13 @@ def create_app(config_class=Config):
     SimulationRunner.register_cleanup()
     if should_log_startup:
         logger.info("已注册模拟进程清理函数")
+
+    # 启动时从磁盘恢复 in-flight 模拟状态 (Discovered 2026-07-04: 容器重启后
+    # 内存中的 _run_states dict 为空，导致 resume 时看到 stale IDs 引起 400)
+    n_states = SimulationRunner.rehydrate_states_from_disk()
+    n_pids = SimulationRunner.rehydrate_pid_files()
+    if should_log_startup and (n_states or n_pids):
+        logger.info(f"rehydrated {n_states} state(s) + {n_pids} PID file(s) from disk")
     
     # 请求日志中间件
     @app.before_request

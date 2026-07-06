@@ -337,13 +337,109 @@ class SimulationRunner:
         sim_dir = os.path.join(cls.RUN_STATE_DIR, state.simulation_id)
         os.makedirs(sim_dir, exist_ok=True)
         state_file = os.path.join(sim_dir, "run_state.json")
-        
+
         data = state.to_detail_dict()
-        
+
         with open(state_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        
+
         cls._run_states[state.simulation_id] = state
+
+    @classmethod
+    def rehydrate_states_from_disk(cls) -> int:
+        """Re-populate the in-memory _run_states dict from saved run_state.json files.
+
+        Called at app startup so that after a container restart, the API
+        immediately knows about in-flight simulations (process_pid,
+        runner_status, current_round, etc.) without waiting for a fresh
+        read. Returns the number of states rehydrated.
+
+        Discovered 2026-07-04: without this, container restarts (e.g., to
+        pick up code changes) caused the orchestrator to see the in-memory
+        state empty. Subsequent polling of the status endpoint would fall
+        back to disk via get_run_state, but the simulation worker process
+        itself was gone — the run IDs became dangling references.
+        """
+        import glob as _glob
+        rehydrated = 0
+        pattern = os.path.join(cls.RUN_STATE_DIR, "*", "run_state.json")
+        for state_file in _glob.glob(pattern):
+            sim_id = os.path.basename(os.path.dirname(state_file))
+            try:
+                with open(state_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                state = cls._state_from_dict(data)
+                if state is not None:
+                    cls._run_states[sim_id] = state
+                    rehydrated += 1
+                    logger.info(f"rehydrated state for sim={sim_id} (status={state.runner_status}, round={state.current_round}/{state.total_rounds})")
+            except Exception as e:
+                logger.warning(f"failed to rehydrate state from {state_file}: {e}")
+        return rehydrated
+
+    @classmethod
+    def _state_from_dict(cls, data: dict) -> "SimulationRunState":
+        """Reconstruct a SimulationRunState from a saved dict (mirror of to_dict)."""
+        from .simulation_manager import SimulationRunState
+        try:
+            return SimulationRunState(
+                simulation_id=data.get("simulation_id"),
+                runner_status=data.get("runner_status", "idle"),
+                current_round=data.get("current_round", 0),
+                total_rounds=data.get("total_rounds", 0),
+                progress_percent=data.get("progress_percent", 0),
+                simulated_hours=data.get("simulated_hours", 0),
+                total_simulation_hours=data.get("total_simulation_hours", 0),
+                twitter_current_round=data.get("twitter_current_round", 0),
+                reddit_current_round=data.get("reddit_current_round", 0),
+                twitter_simulated_hours=data.get("twitter_simulated_hours", 0),
+                reddit_simulated_hours=data.get("reddit_simulated_hours", 0),
+                twitter_running=data.get("twitter_running", False),
+                reddit_running=data.get("reddit_running", False),
+                twitter_completed=data.get("twitter_completed", False),
+                reddit_completed=data.get("reddit_completed", False),
+                twitter_actions_count=data.get("twitter_actions_count", 0),
+                reddit_actions_count=data.get("reddit_actions_count", 0),
+                process_pid=data.get("process_pid"),
+                started_at=data.get("started_at"),
+                completed_at=data.get("completed_at"),
+                updated_at=data.get("updated_at"),
+                error=data.get("error"),
+            )
+        except Exception as e:
+            logger.warning(f"failed to reconstruct state from dict: {e}")
+            return None
+
+    @classmethod
+    def rehydrate_pid_files(cls) -> int:
+        """Read worker.pid files to refresh _processes dict after container restart.
+
+        The simulation worker subprocess is gone after a restart, but the
+        PID file is still on disk. Reading it lets get_run_state() know the
+        sim exists and trigger its PID liveness check (which will correctly
+        mark the sim as process_died).
+        """
+        import glob as _glob
+        refreshed = 0
+        pattern = os.path.join(cls.RUN_STATE_DIR, "*", "worker.pid")
+        for pid_file in _glob.glob(pattern):
+            sim_id = os.path.basename(os.path.dirname(pid_file))
+            try:
+                with open(pid_file, 'r') as f:
+                    pid = int(f.read().strip())
+                # Create a placeholder subprocess entry just so get_run_state()
+                # can do the PID liveness check. The actual subprocess is gone
+                # (poll will return None), so it will mark as process_died.
+                if sim_id not in cls._processes:
+                    class _StubProcess:
+                        def __init__(self, pid): self.pid = pid
+                        def poll(self): return None  # process is gone
+                    cls._processes[sim_id] = _StubProcess(pid)
+                    refreshed += 1
+                    logger.info(f"refreshed PID file for sim={sim_id} pid={pid}")
+            except Exception as e:
+                logger.warning(f"failed to read PID file {pid_file}: {e}")
+        return refreshed
     
     @classmethod
     def start_simulation(
