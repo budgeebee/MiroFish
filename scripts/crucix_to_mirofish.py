@@ -1668,7 +1668,7 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
 
 def main():
     parser = argparse.ArgumentParser(description="Feed Crucix OSINT into MiroFish for trading predictions")
-    parser.add_argument("--max-rounds", type=int, default=40, help="Max simulation rounds (default: 40)")
+    parser.add_argument("--max-rounds", type=int, default=30, help="Max simulation rounds (default: 30; reduced from 40 to cut the AFTER-the-rounds hang rate)")
     parser.add_argument("--crucix-json", default=CRUCIX_LATEST, help="Path to latest.json")
     parser.add_argument("--dry-run", action="store_true", help="Just generate markdown, don't run simulation")
     parser.add_argument("--project-name", default=None, help="Override project name")
