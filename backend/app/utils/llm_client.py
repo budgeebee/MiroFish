@@ -79,7 +79,7 @@ class LLMClient:
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_tokens: int = 8192,
         response_format: Optional[Dict] = None
     ) -> str:
         """
@@ -142,17 +142,38 @@ class LLMClient:
         if "kimi" in model.lower() or "k2" in model.lower():
             temperature = 1.0
 
+        # Strip empty assistant messages from the conversation history
+        # (Discovered 2026-07-05: CAMEL's re-formatting loop sometimes leaves
+        # an empty assistant message at position N, and the OpenAI-compat
+        # API (incl. moonshot) rejects with 400. Triggers an infinite retry
+        # loop → "round 0/40" hang. Drop the empty messages before sending.)
+        cleaned = [m for m in messages if m.get("content") or m.get("role") == "system"]
+        if len(cleaned) < len(messages):
+            logger.debug(f"stripped {len(messages) - len(cleaned)} empty message(s) before sending to {model}")
+
         kwargs = {
             "model": model,
-            "messages": messages,
+            "messages": cleaned,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        
+
         if response_format:
             kwargs["response_format"] = response_format
-        
-        response = client.chat.completions.create(**kwargs)
+
+        try:
+            response = client.chat.completions.create(**kwargs)
+        except Exception as e:
+            # If we get a "must not be empty" 400 (race condition: another
+            # component injected an empty message between our filter and the
+            # API call), retry once after stripping again.
+            err_str = str(e)
+            if "must not be empty" in err_str or "empty" in err_str.lower():
+                logger.warning(f"got 400 for empty message on {model}, retrying after aggressive strip")
+                kwargs["messages"] = [m for m in cleaned if m.get("content", "").strip()]
+                response = client.chat.completions.create(**kwargs)
+            else:
+                raise
         if not response.choices:
             return None
         content = response.choices[0].message.content
@@ -166,7 +187,7 @@ class LLMClient:
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.3,
-        max_tokens: int = 4096
+        max_tokens: int = 8192
     ) -> Dict[str, Any]:
         """
         发送聊天请求并返回JSON
