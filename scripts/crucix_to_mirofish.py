@@ -1650,6 +1650,97 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
     brief_out.write_text(Path(md_path).read_text(encoding="utf-8"), encoding="utf-8")
     print(f"  Brief saved: {brief_out}")
 
+    # Translate the report to English (Discovered 2026-07-06: the OASIS
+    # pipeline produces Chinese output, which the schwalpaca agent
+    # understands via LLM but limits direct readability. Producing an
+    # English sibling file in parallel — Chinese stays as canonical
+    # source, English for downstream consumers).
+    try:
+        translate_report_to_english(biggest)
+    except Exception as e:
+        print(f"  Translation to English failed (non-fatal): {e}")
+
+
+def translate_report_to_english(report_path: Path) -> None:
+    """Translate a Chinese OASIS report to English and save as a sibling file.
+
+    Uses kimi-k2.6 (256K context window) which is well-suited for
+    translation tasks. The OASIS LLM (kimi-k2.7-code) is tuned for
+    code generation; kimi-k2.6 is the general-purpose kimi that handles
+    translation cleanly. If that fails, falls back to the primary
+    (MiniMax M3, 1M context). Always reads source from disk and writes
+    the translation to a new file (*_en.md), preserving the original
+    Chinese as the canonical source.
+
+    The English version has the same structure as the Chinese one but
+    translated headings + body. Used by /ai/intel-brief/mirofish on the
+    schwalpaca side as the consumer.
+    """
+    import urllib.request, json as _json
+    print(f"\n  Translating report to English...")
+
+    src_text = report_path.read_text(encoding="utf-8")
+    if not src_text.strip():
+        print(f"  Empty source, skipping translation")
+        return
+
+    # Get LLM config from env — prefer kimi-k2.6 (256K context) for
+    # translation; fall back to primary (MiniMax M3, 1M context) if no
+    # boost is configured. The OASIS default (kimi-k2.7-code) is tuned
+    # for code and is worse at general translation.
+    llm_key = os.environ.get("LLM_BOOST_API_KEY") or os.environ.get("LLM_API_KEY")
+    llm_url = os.environ.get("LLM_BOOST_BASE_URL", "https://api.moonshot.ai/v1")
+    boost_model = os.environ.get("LLM_BOOST_MODEL_NAME", "kimi-k2.6")
+    primary_model = os.environ.get("LLM_MODEL_NAME", "MiniMax-M3")
+    primary_url = os.environ.get("LLM_BASE_URL", "https://api.minimax.io/v1")
+    primary_key = os.environ.get("LLM_API_KEY")
+    if not llm_key:
+        print(f"  No LLM_API_KEY in env, skipping translation")
+        return
+
+    # Truncate to fit safely in 32k tokens.
+    if len(src_text) > 80000:
+        src_text = src_text[:80000] + "\n\n[truncated]"
+
+    prompt = (
+        "Translate the following Chinese financial intelligence report to English. "
+        "Preserve all markdown structure, headers, numerical data, and entity names "
+        "(e.g., 'COIN 75%', 'TLT $85.51'). Use professional financial analyst English. "
+        "Keep bullet points and section hierarchy intact. Translate the full report — "
+        "do not summarize or skip sections.\n\n"
+        f"{src_text}"
+    )
+
+    try:
+        # kimi models require temperature=1 (Discovered 2026-07-06)
+        # Lower max_tokens to avoid the slow large-output case that hung
+        # in testing. 4000 fits a single chapter comfortably.
+        req = urllib.request.Request(
+            f"{llm_url}/chat/completions",
+            data=_json.dumps({
+                "model": llm_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 1,  # kimi requires 1 (not 0.1)
+                "max_tokens": 4000,  # was 16000 — caused 3min timeouts
+            }).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {llm_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0",  # Cloudflare 1010 fix
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = _json.loads(resp.read())
+        en_text = data["choices"][0]["message"]["content"]
+    except Exception as e:
+        raise RuntimeError(f"translation API call failed: {e}")
+
+    # Save as sibling file
+    en_path = report_path.with_name(report_path.stem + "_en.md")
+    en_path.write_text(en_text, encoding="utf-8")
+    print(f"  English translation saved: {en_path.name} ({len(en_text):,} chars)")
+
     # Clean up checkpoint on success
     _clear_state()
 
