@@ -74,6 +74,8 @@ services:
       - ./scripts:/data/scripts
       - /home/irvins/Projects/Crucix/runs:/crucix/runs:ro
       - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
       - graphiti_network

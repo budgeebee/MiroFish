@@ -379,8 +379,11 @@ class SimulationRunner:
 
     @classmethod
     def _state_from_dict(cls, data: dict) -> "SimulationRunState":
-        """Reconstruct a SimulationRunState from a saved dict (mirror of to_dict)."""
-        from .simulation_manager import SimulationRunState
+        """Reconstruct a SimulationRunState from a saved dict (mirror of to_dict).
+
+        SimulationRunState is defined as a dataclass in this same module (line
+        ~102), so we can use a positional construction directly. No import needed.
+        """
         try:
             return SimulationRunState(
                 simulation_id=data.get("simulation_id"),

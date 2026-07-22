@@ -23,7 +23,7 @@ app = FastAPI()
 
 def find_todays_report():
     today = datetime.now(ET).strftime("%Y%m%d")
-    for pattern in [f"prediction_{today}_EN.md", f"prediction_{today}*.md"]:
+    for pattern in [f"prediction_{today}_en.md", f"prediction_{today}*.md"]:
         matches = sorted(
             [m for m in glob.glob(str(OUTPUT_DIR / pattern)) if "brief" not in Path(m).name],
             key=os.path.getmtime, reverse=True,
