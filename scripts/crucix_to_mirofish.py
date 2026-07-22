@@ -37,6 +37,7 @@ CRUCIX_LATEST = os.getenv(
     os.path.expanduser("~/Projects/Crucix/runs/latest.json"),
 )
 CRUCIX_URL = os.getenv("CRUCIX_URL", "http://localhost:3117")
+INSIDER_CAPITOL_URL = os.getenv("INSIDER_CAPITOL_URL", "http://host.docker.internal:9700")
 
 
 def _parallel_fetch(symbols, fetch_fn, max_workers=10):
@@ -83,7 +84,68 @@ def refresh_adanos():
         print(f"  Adanos refresh skipped — Crucix unreachable at {CRUCIX_URL}")
     except Exception as e:
         print(f"  Adanos refresh failed: {e} — using on-disk cache")
-SCHWALPACA_URL = os.getenv("SCHWALPACA_URL", "http://localhost:8855")
+
+
+def fetch_insider_capitol_signal() -> dict | None:
+    """Fetch congressional trading signal from Insider Capitol.
+
+    Returns the daily_signal dict or None if unavailable.
+    """
+    try:
+        r = _session.get(f"{INSIDER_CAPITOL_URL}/signal/daily?days=3", timeout=15)
+        if r.ok:
+            data = r.json()
+            n = data.get("n_new_disclosures", 0)
+            trifecta = data.get("n_trifecta_flagged", 0)
+            sectors = len(data.get("hot_sectors", []))
+            print(f"  Insider Capitol signal: {n} disclosures ({trifecta} trifecta), {sectors} hot sectors")
+            return data
+        print(f"  Insider Capitol signal HTTP {r.status_code}")
+        return None
+    except requests.exceptions.ConnectionError:
+        print(f"  Insider Capitol signal skipped — unreachable at {INSIDER_CAPITOL_URL}")
+        return None
+    except Exception as e:
+        print(f"  Insider Capitol signal failed: {e}")
+        return None
+
+
+def insider_capitol_to_markdown(signal: dict) -> str:
+    """Format Insider Capitol daily signal as a markdown section."""
+    if not signal:
+        return ""
+    lines = []
+    n = signal.get("n_new_disclosures", 0)
+    trifecta = signal.get("n_trifecta_flagged", 0)
+    lines.append(f"**{n} new disclosures** ({trifecta} trifecta-flagged) in the last {signal.get('window_days', 3)} days")
+    hot = signal.get("hot_sectors", [])
+    if hot:
+        lines.append(f"\n**Hot sectors** (by dollar volume):")
+        for s in hot:
+            vol = s.get("dollar_volume", 0)
+            lines.append(f"- {s['sector']}: ${vol:,.0f} ({s['n_purchases']} purchases)")
+    alpha = signal.get("proven_alpha_members", [])
+    if alpha:
+        lines.append(f"\n**Proven alpha members** (beat market significantly):")
+        for m in alpha:
+            lines.append(f"- {m['member_name']}: mean AR(90)={m['mean_ar_90']:+.2f}% ({m['n_trades']} trades)")
+    trifecta = signal.get("n_trifecta_flagged", 0)
+    if trifecta:
+        lines.append(f"\n**Trifecta-flagged disclosures** ({trifecta}):")
+        for t in signal.get("new_disclosures", []):
+            if t.get("trifecta_flag"):
+                amt = t.get("amount_mid", "")
+                amt_str = f" ${amt:,.0f}" if amt else ""
+                lines.append(f"- {t['member_name']} ({t['chamber']}): **{t['ticker']}** {t['type']}{amt_str} — score {t.get('insider_score', '?')}")
+    return "\n".join(lines) if lines else ""
+
+
+def _section(title, body):
+    if not body or body.strip() == "":
+        return ""
+    return f"## {title}\n\n{body}\n\n"
+
+
 SCHWALPACA_API_KEY = os.getenv("SCHWALPACA_API_KEY", "")
 _TIMEOUT = 10
 
@@ -331,6 +393,148 @@ def crucix_to_markdown(data: dict) -> str:
                 lines.append(f"- **{ticker}**{name_str}{extras_str}")
         if lines:
             parts.append(_section("Prediction Markets & Social Sentiment (Adanos)", "\n".join(lines)))
+
+    # --- Earthquakes (USGS) ---
+    usgs = sources.get("USGS", {})
+    if not usgs.get("error"):
+        major = usgs.get("majorEvents", []) or []
+        if major:
+            lines = []
+            for q in major[:8]:
+                mag = q.get("mag", 0)
+                place = (q.get("place") or "?").split(",")[-1].strip()
+                depth = q.get("depthKm", "?")
+                tsunami = " [TSUNAMI FLAG]" if q.get("tsunami") else ""
+                alert = q.get("alert") or ""
+                alert_str = f" [{alert.upper()}]" if alert in ("red", "orange") else ""
+                lines.append(f"- **M{mag:.1f}** {place} — depth {depth}km{tsunami}{alert_str}")
+            parts.append(_section("Major Earthquakes (USGS, M5.5+)", "\n".join(lines)))
+
+    # --- Natural disasters (GDACS) ---
+    gdacs = sources.get("GDACS", {})
+    gdacs_events = gdacs.get("events", []) or []
+    gdacs_red = [e for e in gdacs_events if e.get("severity") == "Red"]
+    gdacs_orange = [e for e in gdacs_events if e.get("severity") == "Orange"]
+    if gdacs.get("totalEvents", 0) > 0 and (gdacs_red or gdacs_orange):
+        lines = [f"**{gdacs.get('totalEvents', 0)} total disasters tracked** ({len(gdacs_red)} RED, {len(gdacs_orange)} ORANGE)"]
+        by_type = gdacs.get("byType") or {}
+        if by_type:
+            lines.append(f"By type: " + ", ".join(f"{k}={v}" for k, v in by_type.items()))
+        for e in gdacs_red[:3] + gdacs_orange[:5]:
+            sev = (e.get("severity") or "").upper()
+            t = e.get("type", "?")
+            title = (e.get("title") or "?")[:120]
+            lines.append(f"- [{sev}] {t}: {title}")
+        parts.append(_section("Global Disasters (GDACS)", "\n".join(lines)))
+
+    # --- NASA EONET (natural events) ---
+    eonet = sources.get("EONET", {})
+    eonet_events = eonet.get("events", []) or []
+    notable_eonet = [e for e in eonet_events if (e.get("category") or "").lower() in ("volcanoes", "severe storms", "tropical cyclones")]
+    if eonet.get("totalOpen", 0) > 0 and notable_eonet:
+        lines = [f"**{eonet.get('totalOpen', 0)} open natural events** tracked by NASA EONET"]
+        for e in notable_eonet[:6]:
+            cat = e.get("category", "?")
+            title = (e.get("title") or "?")[:100]
+            lines.append(f"- {cat}: {title}")
+        parts.append(_section("NASA EONET — Notable Natural Events", "\n".join(lines)))
+
+    # --- Climate anomalies (Open-Meteo) ---
+    openmeteo = sources.get("OpenMeteo", {})
+    anomalies = openmeteo.get("anomalies", []) or []
+    if anomalies:
+        lines = []
+        for h in anomalies[:5]:
+            region = h.get("label") or h.get("key") or "?"
+            delta = h.get("tempAnomalyC", 0)
+            sev = h.get("tempSeverity", "?")
+            base = h.get("baselineTempC", 0)
+            recent = h.get("recentTempC", 0)
+            sign = "+" if delta >= 0 else ""
+            lines.append(f"- **{region}**: {sign}{delta:.1f}°C vs baseline ({sev}) — {base:.1f}°C → {recent:.1f}°C")
+        parts.append(_section("Climate Anomalies at Conflict Hotspots (Open-Meteo ERA5)", "\n".join(lines)))
+
+    # --- ECB rates + FX ---
+    ecb = sources.get("ECB", {})
+    ecb_rates = ecb.get("rates", []) or []
+    ecb_ok = [r for r in ecb_rates if r.get("value") is not None and not r.get("error")]
+    if ecb_ok:
+        lines = []
+        for r in ecb_ok:
+            chg = r.get("change") or 0
+            pct = r.get("changePct") or 0
+            sign = "+" if chg >= 0 else ""
+            lines.append(f"- **{r.get('label', r.get('key'))}**: {r.get('value'):.4f} ({sign}{chg:.4f}, {sign}{pct:.2f}%) as of {r.get('date', '?')}")
+        parts.append(_section("ECB Policy Rates & FX Reference Rates", "\n".join(lines)))
+
+    # --- Polymarket (prediction markets) ---
+    polymarket = sources.get("Polymarket", {})
+    if polymarket.get("status") == "ok" and polymarket.get("totalRelevant", 0) > 0:
+        top = polymarket.get("top", []) or []
+        by_cat = polymarket.get("byCategory") or {}
+        if top:
+            cat_str = ", ".join(f"{k}={v}" for k, v in by_cat.items()) if by_cat else ""
+            lines = []
+            if cat_str:
+                lines.append(f"By category: {cat_str}")
+            lines.append("")
+            for m in top[:10]:
+                q = m.get("question") or "?"
+                yes = m.get("yesPrice")
+                vol = m.get("volume24hr") or 0
+                end = (m.get("endDate") or "")[:10]
+                cat = m.get("category") or "?"
+                yes_str = f"{yes*100:.0f}%" if yes is not None else "?"
+                vol_str = f"${vol/1000:.0f}k 24h vol" if vol else ""
+                lines.append(f"- [{cat}] **{yes_str} YES** — {q[:90]} ({vol_str}, ends {end})")
+            parts.append(_section("Prediction Markets (Polymarket)", "\n".join(lines)))
+        extremes = polymarket.get("highProbShifts") or []
+        if extremes:
+            lines = ["**Markets at extremes (high signal value for cross-domain confirmation):**"]
+            for m in extremes[:5]:
+                q = m.get("question") or "?"
+                yes = m.get("yesPrice")
+                vol = m.get("volume24hr") or 0
+                yes_str = f"{yes*100:.0f}%" if yes is not None else "?"
+                lines.append(f"- {yes_str} YES — {q[:80]} (vol ${vol/1000:.0f}k)")
+            parts.append(_section("Polymarket — Extreme Probabilities", "\n".join(lines)))
+
+    # --- Travel advisories (government risk assessments) ---
+    advisories = sources.get("Advisories", {})
+    dnt = advisories.get("doNotTravel") or []
+    reconsider = advisories.get("reconsider") or []
+    if advisories.get("total", 0) > 0 and (dnt or reconsider):
+        lines = []
+        if dnt:
+            lines.append(f"**Do Not Travel ({len(dnt)} countries):** " + ", ".join(a.get("country") for a in dnt[:10]))
+        if reconsider:
+            lines.append(f"**Reconsider Travel ({len(reconsider)} countries):** " + ", ".join(a.get("country") for a in reconsider[:10]))
+        # Most-recent updates with description
+        recent = sorted(dnt + reconsider, key=lambda a: a.get("pubDate") or "", reverse=True)[:6]
+        for a in recent:
+            level = a.get("level", "?")
+            country = a.get("country") or "?"
+            desc = (a.get("description") or "")[:140]
+            lines.append(f"- [{level}] {country}: {desc}")
+        parts.append(_section("Government Travel Advisories", "\n".join(lines)))
+
+    # --- Cyber threat IOCs (abuse.ch) ---
+    abusech = sources.get("abuse.ch", {})
+    if not abusech.get("error"):
+        c2_count = abusech.get("c2ServerCount", 0)
+        mal_count = abusech.get("malwareHostCount", 0)
+        if c2_count or mal_count:
+            lines = [f"**{c2_count} active C2 servers**, {mal_count} malware distribution hosts"]
+            by_country = abusech.get("c2ByCountry") or {}
+            if by_country:
+                top = sorted(by_country.items(), key=lambda x: x[1], reverse=True)[:5]
+                lines.append(f"Top C2 source countries: " + ", ".join(f"{k}={v}" for k, v in top))
+            top_c2 = (abusech.get("c2Servers") or [])[:5]
+            for c in top_c2:
+                mal = c.get("malware") or "?"
+                asn = c.get("asName") or "?"
+                lines.append(f"- C2: {c.get('ip')} ({mal}, {asn}, {c.get('country') or '?'})")
+            parts.append(_section("Cyber Threat Infrastructure (abuse.ch)", "\n".join(lines)))
 
     # --- Thermal / fire detections (FIRMS) ---
     firms = sources.get("FIRMS", {})
@@ -1661,20 +1865,39 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
         print(f"  Translation to English failed (non-fatal): {e}")
 
 
+def _call_llama_swap(prompt: str, model: str = "granite4.1-8b",
+                      host: str = "http://host.docker.internal:8090",
+                      timeout: int = 120) -> str | None:
+    """Try local llama-swap translation. Returns None if unavailable."""
+    import urllib.request, json as _json, time
+    start = time.time()
+    try:
+        req = urllib.request.Request(
+            f"{host}/v1/chat/completions",
+            data=_json.dumps({
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 4096,
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = _json.loads(resp.read())
+        text = data["choices"][0]["message"]["content"]
+        print(f"    local {model}: {len(text)} chars in {time.time()-start:.1f}s")
+        return text
+    except Exception as e:
+        print(f"    local {model} failed ({e}), falling back to API...")
+        return None
+
+
 def translate_report_to_english(report_path: Path) -> None:
-    """Translate a Chinese OASIS report to English and save as a sibling file.
+    """Translate a Chinese OASIS report to English and save as *._en.md.
 
-    Uses kimi-k2.6 (256K context window) which is well-suited for
-    translation tasks. The OASIS LLM (kimi-k2.7-code) is tuned for
-    code generation; kimi-k2.6 is the general-purpose kimi that handles
-    translation cleanly. If that fails, falls back to the primary
-    (MiniMax M3, 1M context). Always reads source from disk and writes
-    the translation to a new file (*_en.md), preserving the original
-    Chinese as the canonical source.
-
-    The English version has the same structure as the Chinese one but
-    translated headings + body. Used by /ai/intel-brief/mirofish on the
-    schwalpaca side as the consumer.
+    Tries local llama-swap (granite4.1-8b) first for speed & privacy,
+    then falls back to kimi-k2.6 via API.
     """
     import urllib.request, json as _json
     print(f"\n  Translating report to English...")
@@ -1682,20 +1905,6 @@ def translate_report_to_english(report_path: Path) -> None:
     src_text = report_path.read_text(encoding="utf-8")
     if not src_text.strip():
         print(f"  Empty source, skipping translation")
-        return
-
-    # Get LLM config from env — prefer kimi-k2.6 (256K context) for
-    # translation; fall back to primary (MiniMax M3, 1M context) if no
-    # boost is configured. The OASIS default (kimi-k2.7-code) is tuned
-    # for code and is worse at general translation.
-    llm_key = os.environ.get("LLM_BOOST_API_KEY") or os.environ.get("LLM_API_KEY")
-    llm_url = os.environ.get("LLM_BOOST_BASE_URL", "https://api.moonshot.ai/v1")
-    boost_model = os.environ.get("LLM_BOOST_MODEL_NAME", "kimi-k2.6")
-    primary_model = os.environ.get("LLM_MODEL_NAME", "MiniMax-M3")
-    primary_url = os.environ.get("LLM_BASE_URL", "https://api.minimax.io/v1")
-    primary_key = os.environ.get("LLM_API_KEY")
-    if not llm_key:
-        print(f"  No LLM_API_KEY in env, skipping translation")
         return
 
     # Truncate to fit safely in 32k tokens.
@@ -1711,37 +1920,63 @@ def translate_report_to_english(report_path: Path) -> None:
         f"{src_text}"
     )
 
-    try:
-        # kimi models require temperature=1 (Discovered 2026-07-06)
-        # Lower max_tokens to avoid the slow large-output case that hung
-        # in testing. 4000 fits a single chapter comfortably.
-        req = urllib.request.Request(
-            f"{llm_url}/chat/completions",
-            data=_json.dumps({
-                "model": llm_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 1,  # kimi requires 1 (not 0.1)
-                "max_tokens": 4000,  # was 16000 — caused 3min timeouts
-            }).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {llm_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0",  # Cloudflare 1010 fix
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = _json.loads(resp.read())
-        en_text = data["choices"][0]["message"]["content"]
-    except Exception as e:
-        raise RuntimeError(f"translation API call failed: {e}")
+    # Try local llama-swap first
+    en_text = _call_llama_swap(prompt)
+    if en_text is not None:
+        en_path = report_path.with_name(report_path.stem + "_en.md")
+        en_path.write_text(en_text, encoding="utf-8")
+        print(f"  English translation saved: {en_path.name} ({len(en_text):,} chars)")
+        _clear_state()
+        return
 
-    # Save as sibling file
+    # Fallback: API (kimi-k2.6 or primary)
+    llm_key = os.environ.get("LLM_BOOST_API_KEY") or os.environ.get("LLM_API_KEY")
+    llm_url = os.environ.get("LLM_BOOST_BASE_URL", "https://api.moonshot.ai/v1")
+    boost_model = os.environ.get("LLM_BOOST_MODEL_NAME", "kimi-k2.6")
+    primary_key = os.environ.get("LLM_API_KEY")
+    primary_url = os.environ.get("LLM_BASE_URL", "https://api.minimax.io/v1")
+    primary_model = os.environ.get("LLM_MODEL_NAME", "MiniMax-M3")
+    if not llm_key:
+        print(f"  No LLM_API_KEY and local failed, skipping translation")
+        return
+
+    for label, url, key, model in [
+        ("boost", llm_url, llm_key, boost_model),
+        ("primary", primary_url, primary_key, primary_model),
+    ]:
+        if not key:
+            continue
+        print(f"    trying {label}: {model}...")
+        try:
+            req = urllib.request.Request(
+                f"{url}/chat/completions",
+                data=_json.dumps({
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 1,  # kimi requires 1
+                    "max_tokens": 4000,
+                }).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = _json.loads(resp.read())
+            en_text = data["choices"][0]["message"]["content"]
+            print(f"    {label} ({model}): {len(en_text)} chars")
+            break
+        except Exception as e:
+            print(f"    {label} failed: {e}")
+            continue
+    else:
+        raise RuntimeError("translation: all backends failed")
+
     en_path = report_path.with_name(report_path.stem + "_en.md")
     en_path.write_text(en_text, encoding="utf-8")
     print(f"  English translation saved: {en_path.name} ({len(en_text):,} chars)")
-
-    # Clean up checkpoint on success
     _clear_state()
 
     return {
@@ -1820,6 +2055,14 @@ def main():
             print(f"  Added {len(news_items)} headlines from {len(set(i.get('source') for i in news_items))} sources")
         else:
             print("  No news items retrieved")
+    # Fetch and append Insider Capitol congressional trading signal
+    print("Fetching Insider Capitol congressional trading signal...")
+    ic_signal = fetch_insider_capitol_signal()
+    if ic_signal:
+        ic_md = insider_capitol_to_markdown(ic_signal)
+        if ic_md:
+            md += "\n" + _section("Congressional Trading (Insider Capitol)", ic_md)
+            print(f"  Added Insider Capitol signal to brief")
     print(f"  Total brief: {len(md)} characters")
 
     # Fetch social sentiment for held positions
