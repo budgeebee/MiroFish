@@ -65,6 +65,11 @@ services:
       - MIROFISH_OUTPUT_DIR=/data/output
       - MIROFISH_URL=http://mirofish:5001
       - CRUCIX_LATEST=/crucix/runs/latest.json
+      - CRUCIX_URL=http://host.docker.internal:3117
+      - SCHWALPACA_URL=http://host.docker.internal:8855
+      - SCHWALPACA_JOURNAL=/journals/schwalpaca/trading-journal.json
+      - KALSHI_JOURNAL=/journals/kalshi/kalshi-trading-journal.json
+      - INSIDER_CAPITOL_URL=http://host.docker.internal:9700
       - NEWS_AGGREGATOR_URL=http://news-aggregator:8000
       - GRAPHITI_URL=http://graphiti_api:8000
     ports:
@@ -73,6 +78,8 @@ services:
       - ./output:/data/output
       - ./scripts:/data/scripts
       - /home/irvins/Projects/Crucix/runs:/crucix/runs:ro
+      - /home/irvins/Projects/schwalpaca/journal:/journals/schwalpaca:ro
+      - /home/irvins/Projects/kalshimarket/journal:/journals/kalshi:ro
       - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       - "host.docker.internal:host-gateway"

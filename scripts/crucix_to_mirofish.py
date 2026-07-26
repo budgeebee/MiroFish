@@ -12,7 +12,8 @@ Usage:
 
 Environment:
     MIROFISH_URL        MiroFish graph/simulation API (default: http://mirofish:5001)
-    CRUCIX_LATEST       Path to latest.json (default: ~/Projects/Crucix/runs/latest.json)
+    CRUCIX_LATEST       Path to latest.json (default: /crucix/runs/latest.json)
+    SCHWALPACA_URL      Schwalpaca API (default: http://host.docker.internal:8855)
 """
 
 import argparse
@@ -24,6 +25,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -31,13 +33,80 @@ import requests
 # Saves ~1-2s per MiroFish pipeline run vs opening a new TCP+TLS handshake per call.
 _session = requests.Session()
 
+# Runtime settings are defined once. Defaults target the docker-compose network;
+# local invocations can override every value through the environment.
+ET = ZoneInfo("America/New_York")
+MIROFISH_DIR = Path(os.getenv("MIROFISH_DIR", "/data"))
+OUTPUT_DIR = Path(os.getenv("MIROFISH_OUTPUT_DIR", str(MIROFISH_DIR / "output")))
 MIROFISH_URL = os.getenv("MIROFISH_URL", "http://mirofish:5001")
-CRUCIX_LATEST = os.getenv(
-    "CRUCIX_LATEST",
-    os.path.expanduser("~/Projects/Crucix/runs/latest.json"),
-)
-CRUCIX_URL = os.getenv("CRUCIX_URL", "http://localhost:3117")
+CRUCIX_LATEST = os.getenv("CRUCIX_LATEST", "/crucix/runs/latest.json")
+CRUCIX_URL = os.getenv("CRUCIX_URL", "http://host.docker.internal:3117")
+SCHWALPACA_URL = os.getenv("SCHWALPACA_URL", "http://host.docker.internal:8855")
 INSIDER_CAPITOL_URL = os.getenv("INSIDER_CAPITOL_URL", "http://host.docker.internal:9700")
+NEWS_AGGREGATOR_URL = os.getenv("NEWS_AGGREGATOR_URL", "http://news-aggregator:8000")
+SCHWALPACA_JOURNAL = Path(os.getenv(
+    "SCHWALPACA_JOURNAL",
+    "/journals/schwalpaca/trading-journal.json",
+))
+KALSHI_JOURNAL = Path(os.getenv(
+    "KALSHI_JOURNAL",
+    "/journals/kalshi/kalshi-trading-journal.json",
+))
+LLAMA_SWAP_URL = os.getenv("LLAMA_SWAP_URL", "http://host.docker.internal:8090")
+LLM_BOOST_BASE_URL = os.getenv("LLM_BOOST_BASE_URL", "https://api.moonshot.ai/v1")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.minimax.io/v1")
+SCHWALPACA_API_KEY = os.getenv("SCHWALPACA_API_KEY", "")
+REPORT_MIN_BYTES = 1000
+
+
+def _now():
+    return datetime.now(ET)
+
+
+def _validate_report_text(text: str):
+    size = len(text.encode("utf-8"))
+    if not text.strip():
+        raise ValueError("report is empty")
+    if size < REPORT_MIN_BYTES:
+        raise ValueError(
+            f"report is undersized ({size} bytes; minimum {REPORT_MIN_BYTES})"
+        )
+
+
+def _atomic_write_text(path: Path, text: str, validator=None):
+    """Validate and atomically publish text through a temporary sibling."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        published_text = temp_path.read_text(encoding="utf-8")
+        if published_text != text:
+            raise OSError("temporary sibling content did not match requested artifact")
+        if validator:
+            validator(published_text)
+        os.replace(temp_path, path)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _is_valid_report(path: Path) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8")
+        _validate_report_text(text)
+        return True
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
 
 
 def _parallel_fetch(symbols, fetch_fn, max_workers=10):
@@ -146,7 +215,6 @@ def _section(title, body):
     return f"## {title}\n\n{body}\n\n"
 
 
-SCHWALPACA_API_KEY = os.getenv("SCHWALPACA_API_KEY", "")
 _TIMEOUT = 10
 
 SIMULATION_REQUIREMENT = """\
@@ -194,10 +262,17 @@ def crucix_to_markdown(data: dict) -> str:
     ts = meta.get("timestamp", "unknown")
     ok = meta.get("sourcesOk", 0)
     failed = meta.get("sourcesFailed", 0)
+    source_health = data.get("sourceHealth", {})
+    total = (
+        len(source_health)
+        or meta.get("sourcesQueried")
+        or (ok + failed)
+        or len(sources)
+    )
 
     parts = []
     parts.append(f"# OSINT Intelligence Brief — {ts[:19]}Z\n")
-    parts.append(f"*{ok} sources reporting, {failed} failed*\n\n")
+    parts.append(f"*{ok}/{total} sources reporting, {failed} failed*\n\n")
 
     # --- Market snapshot (YFinance) ---
     yf = sources.get("YFinance", {})
@@ -714,12 +789,6 @@ def crucix_to_markdown(data: dict) -> str:
 # News Aggregator (8 global sources)
 # ---------------------------------------------------------------------------
 
-NEWS_AGGREGATOR_URL = os.getenv(
-    "NEWS_AGGREGATOR_URL",
-    "http://news-aggregator:8000",
-)
-
-
 def fetch_news_aggregator(limit=12):
     """Fetch headlines from the news-aggregator container. Returns list of items."""
     try:
@@ -768,11 +837,10 @@ def news_to_markdown(items: list) -> str:
 
 def get_held_symbols():
     """Read open positions from the schwalpaca trading journal."""
-    journal_path = os.path.expanduser("~/.openclaw/workspace/trading-journal.json")
-    if not os.path.exists(journal_path):
+    if not SCHWALPACA_JOURNAL.exists():
         return []
     try:
-        with open(journal_path) as f:
+        with SCHWALPACA_JOURNAL.open(encoding="utf-8") as f:
             journal = json.load(f)
         return list({t["symbol"] for t in journal.get("trades", []) if t.get("status") == "open" and t.get("symbol")})
     except Exception:
@@ -789,13 +857,10 @@ def get_held_kalshi_positions():
     Crucix OSINT already covers the underlying assets (EIA for crude, Treasury
     for rates, etc.).
     """
-    journal_path = os.path.expanduser(
-        "~/.openclaw/workspace/kalshi-trading-journal.json/kalshi-trading-journal.json"
-    )
-    if not os.path.exists(journal_path):
+    if not KALSHI_JOURNAL.exists():
         return []
     try:
-        with open(journal_path) as f:
+        with KALSHI_JOURNAL.open(encoding="utf-8") as f:
             journal = json.load(f)
         out = []
         for t in journal.get("trades", []):
@@ -1451,15 +1516,14 @@ def poll_task(task_id: str, label: str, endpoint: str = "/api/graph/task"):
 
 def _state_path():
     """Path to the pipeline checkpoint file."""
-    output_dir = Path(__file__).parent.parent / "output"
-    output_dir.mkdir(exist_ok=True)
-    return output_dir / ".pipeline_state.json"
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    return OUTPUT_DIR / ".pipeline_state.json"
 
 
 def _save_state(state: dict):
     """Save pipeline checkpoint."""
-    state["updated_at"] = datetime.now().isoformat()
-    _state_path().write_text(json.dumps(state, indent=2), encoding="utf-8")
+    state["updated_at"] = _now().isoformat()
+    _atomic_write_text(_state_path(), json.dumps(state, indent=2))
 
 
 def _load_state() -> dict | None:
@@ -1470,7 +1534,7 @@ def _load_state() -> dict | None:
     try:
         state = json.loads(p.read_text(encoding="utf-8"))
         # Only resume today's runs
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = _now().strftime("%Y-%m-%d")
         if state.get("date") != today:
             return None
         return state
@@ -1503,7 +1567,7 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
         print(f"  simulation_id: {state.get('simulation_id')}")
     else:
         state = {
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "date": _now().strftime("%Y-%m-%d"),
             "completed_step": 0,
             "md_path": md_path,
             "max_rounds": max_rounds,
@@ -1694,6 +1758,8 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
         spinner = ["|", "/", "-", "\\"]
         i = 0
         poll_start = time.time()
+        current = 0
+        total = max_rounds
         MAX_SIM_SECONDS = 90 * 60
         # Watchdog: if status doesn't change for STALE_POLL_SECONDS, treat as hung.
         # Catches the architectural gap where the simulation child dies but the
@@ -1821,13 +1887,16 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
     print(f"{'='*60}")
 
     # Save report markdown locally
-    output_dir = Path(__file__).parent.parent / "output"
-    output_dir.mkdir(exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_path = output_dir / f"prediction_{ts}.md"
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    ts = _now().strftime("%Y%m%d_%H%M%S")
+    report_path = OUTPUT_DIR / f"prediction_{ts}.md"
     md_content = report.get("markdown_content", "")
     if md_content:
-        report_path.write_text(md_content, encoding="utf-8")
+        try:
+            _atomic_write_text(report_path, md_content, _validate_report_text)
+        except ValueError as error:
+            print(f"  FAILED: {error}")
+            sys.exit(1)
         print(f"  Report saved: {report_path}")
     else:
         # Hard fail — the Apr 15 incident was exactly this: pipeline reported
@@ -1838,20 +1907,20 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
     # VERIFY: a prediction file for today exists with non-trivial size.
     # Cron health check used to just look at process exit status — silent
     # step-6 failures slipped through. This catches the file-missing case.
-    today = datetime.now().strftime("%Y%m%d")
-    today_files = sorted(output_dir.glob(f"prediction_{today}*.md"))
+    today = _now().strftime("%Y%m%d")
+    today_files = sorted(
+        path for path in OUTPUT_DIR.glob(f"prediction_{today}*.md")
+        if _is_valid_report(path)
+    )
     if not today_files:
-        print(f"  FAILED: no prediction_{today}*.md found in {output_dir} after pipeline completion")
+        print(f"  FAILED: no prediction_{today}*.md found in {OUTPUT_DIR} after pipeline completion")
         sys.exit(1)
-    biggest = max(today_files, key=lambda f: f.stat().st_size)
-    if biggest.stat().st_size < 1000:
-        print(f"  FAILED: today's report is suspiciously small ({biggest.stat().st_size} bytes) — likely incomplete")
-        sys.exit(1)
-    print(f"  VERIFIED: today's report = {biggest.name} ({biggest.stat().st_size:,} bytes)")
+    newest = max(today_files, key=lambda path: path.stat().st_mtime)
+    print(f"  VERIFIED: today's report = {newest.name} ({newest.stat().st_size:,} bytes)")
 
     # Also save the brief for reference
-    brief_out = output_dir / f"brief_{ts}.md"
-    brief_out.write_text(Path(md_path).read_text(encoding="utf-8"), encoding="utf-8")
+    brief_out = OUTPUT_DIR / f"brief_{ts}.md"
+    _atomic_write_text(brief_out, Path(md_path).read_text(encoding="utf-8"))
     print(f"  Brief saved: {brief_out}")
 
     # Translate the report to English (Discovered 2026-07-06: the OASIS
@@ -1860,13 +1929,21 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
     # English sibling file in parallel — Chinese stays as canonical
     # source, English for downstream consumers).
     try:
-        translate_report_to_english(biggest)
+        translate_report_to_english(report_path)
     except Exception as e:
         print(f"  Translation to English failed (non-fatal): {e}")
+    _clear_state()
+
+    return {
+        "project_id": state["project_id"],
+        "simulation_id": simulation_id,
+        "report_id": report_id,
+        "report_path": str(report_path),
+    }
 
 
 def _call_llama_swap(prompt: str, model: str = "granite4.1-8b",
-                      host: str = "http://host.docker.internal:8090",
+                      host: str = LLAMA_SWAP_URL,
                       timeout: int = 120) -> str | None:
     """Try local llama-swap translation. Returns None if unavailable."""
     import urllib.request, json as _json, time
@@ -1924,25 +2001,22 @@ def translate_report_to_english(report_path: Path) -> None:
     en_text = _call_llama_swap(prompt)
     if en_text is not None:
         en_path = report_path.with_name(report_path.stem + "_en.md")
-        en_path.write_text(en_text, encoding="utf-8")
+        _atomic_write_text(en_path, en_text, _validate_report_text)
         print(f"  English translation saved: {en_path.name} ({len(en_text):,} chars)")
-        _clear_state()
         return
 
     # Fallback: API (kimi-k2.6 or primary)
     llm_key = os.environ.get("LLM_BOOST_API_KEY") or os.environ.get("LLM_API_KEY")
-    llm_url = os.environ.get("LLM_BOOST_BASE_URL", "https://api.moonshot.ai/v1")
     boost_model = os.environ.get("LLM_BOOST_MODEL_NAME", "kimi-k2.6")
     primary_key = os.environ.get("LLM_API_KEY")
-    primary_url = os.environ.get("LLM_BASE_URL", "https://api.minimax.io/v1")
     primary_model = os.environ.get("LLM_MODEL_NAME", "MiniMax-M3")
     if not llm_key:
         print(f"  No LLM_API_KEY and local failed, skipping translation")
         return
 
     for label, url, key, model in [
-        ("boost", llm_url, llm_key, boost_model),
-        ("primary", primary_url, primary_key, primary_model),
+        ("boost", LLM_BOOST_BASE_URL, llm_key, boost_model),
+        ("primary", LLM_BASE_URL, primary_key, primary_model),
     ]:
         if not key:
             continue
@@ -1975,16 +2049,8 @@ def translate_report_to_english(report_path: Path) -> None:
         raise RuntimeError("translation: all backends failed")
 
     en_path = report_path.with_name(report_path.stem + "_en.md")
-    en_path.write_text(en_text, encoding="utf-8")
+    _atomic_write_text(en_path, en_text, _validate_report_text)
     print(f"  English translation saved: {en_path.name} ({len(en_text):,} chars)")
-    _clear_state()
-
-    return {
-        "project_id": state["project_id"],
-        "simulation_id": simulation_id,
-        "report_id": report_id,
-        "report_path": str(report_path),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -2038,8 +2104,18 @@ def main():
 
     sweep_ts = data.get("crucix", {}).get("timestamp", "unknown")
     sources_ok = data.get("crucix", {}).get("sourcesOk", 0)
+    source_health = data.get("sourceHealth", {})
+    sources_total = (
+        len(source_health)
+        or data.get("crucix", {}).get("sourcesQueried")
+        or (
+            sources_ok
+            + data.get("crucix", {}).get("sourcesFailed", 0)
+        )
+        or len(data.get("sources", {}))
+    )
     print(f"  Sweep time: {sweep_ts}")
-    print(f"  Sources OK: {sources_ok}/29")
+    print(f"  Sources OK: {sources_ok}/{sources_total}")
 
     # Convert to markdown
     md = crucix_to_markdown(data)
@@ -2339,22 +2415,20 @@ def main():
 
     # Write to temp file (or output dir for dry-run)
     if args.dry_run:
-        output_dir = Path(__file__).parent.parent / "output"
-        output_dir.mkdir(exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        md_path = output_dir / f"brief_{ts}.md"
-        md_path.write_text(md, encoding="utf-8")
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        ts = _now().strftime("%Y%m%d_%H%M%S")
+        md_path = OUTPUT_DIR / f"brief_{ts}.md"
+        _atomic_write_text(md_path, md)
         print(f"\n  Dry run — brief saved to: {md_path}")
         print(f"\n--- Preview (first 2000 chars) ---\n")
         print(md[:2000])
         return
 
     # Write brief to stable path (survives crashes for --resume)
-    output_dir = Path(__file__).parent.parent / "output"
-    output_dir.mkdir(exist_ok=True)
-    today = datetime.now().strftime("%Y%m%d")
-    md_path = str(output_dir / f".brief_{today}.md")
-    Path(md_path).write_text(md, encoding="utf-8")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    today = _now().strftime("%Y%m%d")
+    md_path = str(OUTPUT_DIR / f".brief_{today}.md")
+    _atomic_write_text(Path(md_path), md)
 
     project_name = args.project_name or f"Crucix Trading Intel {sweep_ts[:10]}"
     run_pipeline(md_path, args.max_rounds, project_name)

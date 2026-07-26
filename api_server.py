@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """MiroFish management API — pipeline control and report serving over HTTP."""
 
-import glob
 import json
 import os
 import subprocess
@@ -14,50 +13,160 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 
 ET = ZoneInfo("America/New_York")
-MIROFISH_DIR = Path(os.getenv("MIROFISH_DIR", str(Path.home() / "Projects/MiroFish")))
+MIROFISH_DIR = Path(os.getenv("MIROFISH_DIR", "/data"))
 OUTPUT_DIR = Path(os.getenv("MIROFISH_OUTPUT_DIR", str(MIROFISH_DIR / "output")))
+CRUCIX_LATEST = Path(os.getenv("CRUCIX_LATEST", "/crucix/runs/latest.json"))
 PIDFILE = OUTPUT_DIR / ".mirofish.pid"
+STATEFILE = OUTPUT_DIR / ".pipeline_state.json"
+REPORT_MIN_BYTES = 1000
 
 app = FastAPI()
 
 
-def find_todays_report():
-    today = datetime.now(ET).strftime("%Y%m%d")
+def validate_report(path):
+    """Return machine-readable evidence that a report is safe to serve."""
+    path = Path(path)
+    evidence = {
+        "path": str(path),
+        "valid": False,
+        "size_bytes": None,
+        "reason": None,
+    }
+    if (
+        path.name.startswith(".")
+        or ".tmp" in path.name
+        or ".partial" in path.name
+    ):
+        evidence["reason"] = "partial filename"
+        return evidence
+    try:
+        raw = path.read_bytes()
+        evidence["size_bytes"] = len(raw)
+    except OSError as error:
+        evidence["reason"] = f"unreadable: {error.strerror or error}"
+        return evidence
+    if not raw:
+        evidence["reason"] = "zero-byte report"
+        return evidence
+    if len(raw) < REPORT_MIN_BYTES:
+        evidence["reason"] = (
+            f"undersized report ({len(raw)} < {REPORT_MIN_BYTES} bytes)"
+        )
+        return evidence
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        evidence["reason"] = "invalid UTF-8"
+        return evidence
+    evidence["valid"] = True
+    evidence["reason"] = "valid"
+    return evidence
+
+
+def find_todays_report(output_dir=None, now=None):
+    output_dir = Path(output_dir or OUTPUT_DIR)
+    current = now or datetime.now(ET)
+    today = current.strftime("%Y%m%d")
     for pattern in [f"prediction_{today}_en.md", f"prediction_{today}*.md"]:
         matches = sorted(
-            [m for m in glob.glob(str(OUTPUT_DIR / pattern)) if "brief" not in Path(m).name],
-            key=os.path.getmtime, reverse=True,
+            (
+                path for path in output_dir.glob(pattern)
+                if "brief" not in path.name and validate_report(path)["valid"]
+            ),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
         )
         if matches:
-            return Path(matches[0]), today
+            return matches[0], today
     return None, today
 
 
-def is_running():
-    if not PIDFILE.exists():
-        return False
+def process_state(pidfile=None):
+    pidfile = Path(pidfile or PIDFILE)
+    result = {
+        "running": False,
+        "pid": None,
+        "pidfile": str(pidfile),
+        "reason": "missing",
+    }
+    if not pidfile.exists():
+        return result
     try:
-        pid = int(PIDFILE.read_text().strip())
+        pid = int(pidfile.read_text(encoding="utf-8").strip())
+        result["pid"] = pid
         os.kill(pid, 0)
-        return True
-    except (ValueError, ProcessLookupError, PermissionError):
+        result["running"] = True
+        result["reason"] = "running"
+        return result
+    except PermissionError:
+        result["running"] = True
+        result["reason"] = "running (permission denied)"
+        return result
+    except (ValueError, ProcessLookupError, OSError):
+        result["reason"] = "stale or invalid pidfile"
         try:
-            PIDFILE.unlink()
-        except FileNotFoundError:
+            pidfile.unlink()
+        except OSError:
             pass
-        return False
+        return result
+
+
+def is_running():
+    return process_state()["running"]
+
+
+def checkpoint_state(statefile=None, now=None):
+    statefile = Path(statefile or STATEFILE)
+    result = {
+        "available": False,
+        "current": False,
+        "path": str(statefile),
+        "completed_step": 0,
+        "date": None,
+        "updated_at": None,
+        "reason": "missing",
+    }
+    if not statefile.exists():
+        return result
+    try:
+        data = json.loads(statefile.read_text(encoding="utf-8"))
+        completed_step = int(data.get("completed_step", 0))
+        today = (now or datetime.now(ET)).strftime("%Y-%m-%d")
+        is_current = data.get("date") == today and completed_step > 0
+        result.update({
+            "available": completed_step > 0,
+            "current": is_current,
+            "completed_step": completed_step,
+            "date": data.get("date"),
+            "updated_at": data.get("updated_at"),
+            "reason": (
+                "current"
+                if is_current
+                else "empty"
+                if completed_step <= 0
+                else "stale"
+            ),
+        })
+    except (OSError, UnicodeDecodeError, ValueError, TypeError):
+        result["reason"] = "invalid"
+    return result
 
 
 def has_checkpoint():
-    state = OUTPUT_DIR / ".pipeline_state.json"
-    if not state.exists():
-        return False
-    try:
-        data = json.loads(state.read_text())
-        today = datetime.now(ET).strftime("%Y-%m-%d")
-        return data.get("date") == today and data.get("completed_step", 0) > 0
-    except (ValueError, KeyError):
-        return False
+    return checkpoint_state()["current"]
+
+
+def find_last_valid_report(output_dir=None):
+    output_dir = Path(output_dir or OUTPUT_DIR)
+    matches = sorted(
+        (
+            path for path in output_dir.glob("prediction_*.md")
+            if "brief" not in path.name and validate_report(path)["valid"]
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return matches[0] if matches else None
 
 
 def kill_zombie_sims():
@@ -131,7 +240,34 @@ def build_summary(path):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    process = process_state()
+    checkpoint = checkpoint_state()
+    last_report = find_last_valid_report()
+    output = {
+        "path": str(OUTPUT_DIR),
+        "exists": OUTPUT_DIR.is_dir(),
+        "readable": OUTPUT_DIR.is_dir() and os.access(OUTPUT_DIR, os.R_OK),
+        "writable": OUTPUT_DIR.is_dir() and os.access(OUTPUT_DIR, os.W_OK),
+    }
+    source = {
+        "path": str(CRUCIX_LATEST),
+        "exists": CRUCIX_LATEST.is_file(),
+        "readable": CRUCIX_LATEST.is_file() and os.access(CRUCIX_LATEST, os.R_OK),
+    }
+    report_evidence = (
+        validate_report(last_report)
+        if last_report
+        else {"valid": False, "path": None, "size_bytes": None, "reason": "none"}
+    )
+    healthy = output["readable"] and output["writable"] and source["readable"]
+    return {
+        "status": "ok" if healthy else "degraded",
+        "output": output,
+        "source": source,
+        "process": process,
+        "checkpoint": checkpoint,
+        "last_valid_report": report_evidence,
+    }
 
 
 @app.get("/status")
@@ -145,8 +281,13 @@ def status():
             "modified": datetime.fromtimestamp(path.stat().st_mtime).isoformat(),
             "pipeline_running": running,
         }
-    return {"available": False, "date": today, "pipeline_running": running,
-            "has_checkpoint": has_checkpoint()}
+    return {
+        "available": False,
+        "date": today,
+        "pipeline_running": running,
+        "has_checkpoint": has_checkpoint(),
+        "checkpoint": checkpoint_state(),
+    }
 
 
 @app.get("/output/today")
