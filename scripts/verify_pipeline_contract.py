@@ -3,6 +3,9 @@
 
 import importlib.util
 import json
+import os
+import subprocess
+import sys
 import tempfile
 from copy import deepcopy
 from datetime import datetime
@@ -183,6 +186,61 @@ def compose_fixture():
         check(required in compose, f"compose contract missing {required}")
 
 
+def host_default_fixture():
+    environment = dict(os.environ)
+    for name in [
+        "MIROFISH_DIR",
+        "MIROFISH_OUTPUT_DIR",
+        "MIROFISH_URL",
+        "CRUCIX_LATEST",
+        "CRUCIX_URL",
+        "SCHWALPACA_URL",
+        "SCHWALPACA_JOURNAL",
+        "KALSHI_JOURNAL",
+    ]:
+        environment.pop(name, None)
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import importlib.util, json, pathlib;"
+                f"p=pathlib.Path({str(ROOT / 'scripts/crucix_to_mirofish.py')!r});"
+                "s=importlib.util.spec_from_file_location('host_defaults',p);"
+                "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
+                "print(json.dumps({"
+                "'root':str(m.MIROFISH_DIR),"
+                "'output':str(m.OUTPUT_DIR),"
+                "'crucix':str(m.CRUCIX_LATEST),"
+                "'mirofish_url':m.MIROFISH_URL,"
+                "'schwalpaca_url':m.SCHWALPACA_URL}))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    defaults = json.loads(probe.stdout)
+    check(defaults["root"] == str(ROOT), "host default lost the MiroFish root")
+    check(
+        defaults["output"] == str(ROOT / "output"),
+        "host default lost the MiroFish output directory",
+    )
+    check(
+        defaults["crucix"].endswith("/Projects/Crucix/runs/latest.json"),
+        "host default lost the Crucix latest path",
+    )
+    check(
+        defaults["mirofish_url"] == "http://localhost:5005",
+        "host default does not reach MiroFish",
+    )
+    check(
+        defaults["schwalpaca_url"] == "http://localhost:8855",
+        "host default does not reach Schwalpaca",
+    )
+
+
 def expect_rejected(callback, expected_message):
     try:
         callback()
@@ -260,7 +318,73 @@ def scenario_contract_fixtures(temp_dir):
         fixture["hypotheses"],
         generated_at=fixture["fetched_at"],
     )
+    evidence_index = pipeline.render_observation_reference_index(manifest)
+    check(
+        all(
+            item["observation_id"] in evidence_index
+            for item in manifest["observations"]
+        ),
+        "live evidence index omitted an observation ID",
+    )
+    embedded_report = (
+        "# Backend intermediate\n\n"
+        "Simulation narrative omitted from the canonical publication.\n\n"
+        "## Scenario Synthesis (Machine-Readable)\n\n"
+        "```json\n"
+        + json.dumps(artifact, ensure_ascii=False, indent=2)
+        + "\n```\n"
+    )
+    extracted = pipeline.extract_scenario_synthesis(
+        embedded_report,
+        manifest,
+        report_id=fixture["report_id"],
+        generated_at=fixture["fetched_at"],
+    )
+    check(extracted == artifact, "live scenario extraction changed the artifact")
     markdown = pipeline.render_scenario_markdown(artifact, manifest)
+    check(
+        artifact["report_id"] == manifest["report_id"]
+        and artifact["report_id"] in markdown,
+        "Markdown, structured artifact, and manifest report IDs differ",
+    )
+    preserved = pipeline.append_preserved_simulation(
+        markdown,
+        (
+            "# Full simulation\n\n"
+            + ("Narrative context remains available. " * 35)
+            + "\n\n## Trading Signals (Structured)\n\n"
+            + "```json\n"
+            + json.dumps([{
+                "asset": "Fixture asset",
+                "direction": "conditional",
+                "reasoning": "Model-derived implication",
+            }])
+            + "\n```\n"
+        ),
+    )
+    check(markdown in preserved, "scenario layer was lost during preservation")
+    check(
+        "Narrative context remains available" in preserved,
+        "simulation narrative was discarded",
+    )
+    check(
+        "## Trading Signals (Structured)" in preserved,
+        "trading signals were discarded",
+    )
+    check(
+        "model-derived hypotheses" in preserved,
+        "preserved trading implications were not qualified",
+    )
+    simulation_path = temp_dir / "simulation_fixture.md"
+    pipeline._atomic_write_text(
+        simulation_path,
+        embedded_report,
+        pipeline._validate_report_text,
+    )
+    check(
+        not simulation_path.name.startswith("prediction_"),
+        "raw simulation archive entered legacy prediction discovery",
+    )
     check(
         artifact["schema_version"] == expected["scenario_schema"],
         "wrong scenario schema",
@@ -353,6 +477,16 @@ def scenario_contract_fixtures(temp_dir):
             manifest,
         ),
         "hypothesis fields differ",
+    )
+
+    sourced_percentage = deepcopy(artifact)
+    sourced_percentage["hypotheses"][0]["claim"] = (
+        "The observed fixture price moved 3.2%."
+    )
+    check(
+        pipeline.validate_scenario_synthesis(sourced_percentage, manifest)
+        is sourced_percentage,
+        "valid sourced percentage was discarded",
     )
     return manifest, artifact, markdown
 
@@ -447,6 +581,7 @@ def main():
         artifact_endpoint_fixture(temp_dir, manifest, artifact)
     source_total_fixture()
     compose_fixture()
+    host_default_fixture()
     cp0_dir = emit_cp0_bundle(manifest, artifact, markdown)
     print(
         "PASS: zero-byte, undersized, invalid UTF-8, partial, valid, atomic-write, "

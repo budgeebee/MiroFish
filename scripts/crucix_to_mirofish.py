@@ -11,9 +11,9 @@ Usage:
     python3 scripts/crucix_to_mirofish.py --dry-run           # just generate the markdown, don't run
 
 Environment:
-    MIROFISH_URL        MiroFish graph/simulation API (default: http://mirofish:5001)
-    CRUCIX_LATEST       Path to latest.json (default: /crucix/runs/latest.json)
-    SCHWALPACA_URL      Schwalpaca API (default: http://host.docker.internal:8855)
+    MIROFISH_URL        MiroFish graph/simulation API (host default: http://localhost:5005)
+    CRUCIX_LATEST       Path to latest.json (host default: ~/Projects/Crucix/runs/latest.json)
+    SCHWALPACA_URL      Schwalpaca API (host default: http://localhost:8855)
 """
 
 import argparse
@@ -35,26 +35,31 @@ import requests
 # Saves ~1-2s per MiroFish pipeline run vs opening a new TCP+TLS handshake per call.
 _session = requests.Session()
 
-# Runtime settings are defined once. Defaults target the docker-compose network;
-# local invocations can override every value through the environment.
+# Runtime settings are defined once. Defaults preserve direct host execution;
+# docker-compose supplies explicit container paths and network URLs.
 ET = ZoneInfo("America/New_York")
-MIROFISH_DIR = Path(os.getenv("MIROFISH_DIR", "/data"))
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECTS_DIR = Path.home() / "Projects"
+MIROFISH_DIR = Path(os.getenv("MIROFISH_DIR", str(PROJECT_ROOT)))
 OUTPUT_DIR = Path(os.getenv("MIROFISH_OUTPUT_DIR", str(MIROFISH_DIR / "output")))
-MIROFISH_URL = os.getenv("MIROFISH_URL", "http://mirofish:5001")
-CRUCIX_LATEST = os.getenv("CRUCIX_LATEST", "/crucix/runs/latest.json")
-CRUCIX_URL = os.getenv("CRUCIX_URL", "http://host.docker.internal:3117")
-SCHWALPACA_URL = os.getenv("SCHWALPACA_URL", "http://host.docker.internal:8855")
-INSIDER_CAPITOL_URL = os.getenv("INSIDER_CAPITOL_URL", "http://host.docker.internal:9700")
-NEWS_AGGREGATOR_URL = os.getenv("NEWS_AGGREGATOR_URL", "http://news-aggregator:8000")
+MIROFISH_URL = os.getenv("MIROFISH_URL", "http://localhost:5005")
+CRUCIX_LATEST = os.getenv(
+    "CRUCIX_LATEST",
+    str(PROJECTS_DIR / "Crucix/runs/latest.json"),
+)
+CRUCIX_URL = os.getenv("CRUCIX_URL", "http://localhost:3117")
+SCHWALPACA_URL = os.getenv("SCHWALPACA_URL", "http://localhost:8855")
+INSIDER_CAPITOL_URL = os.getenv("INSIDER_CAPITOL_URL", "http://localhost:9700")
+NEWS_AGGREGATOR_URL = os.getenv("NEWS_AGGREGATOR_URL", "http://localhost:8000")
 SCHWALPACA_JOURNAL = Path(os.getenv(
     "SCHWALPACA_JOURNAL",
-    "/journals/schwalpaca/trading-journal.json",
+    str(PROJECTS_DIR / "schwalpaca/journal/trading-journal.json"),
 ))
 KALSHI_JOURNAL = Path(os.getenv(
     "KALSHI_JOURNAL",
-    "/journals/kalshi/kalshi-trading-journal.json",
+    str(PROJECTS_DIR / "kalshimarket/journal/kalshi-trading-journal.json"),
 ))
-LLAMA_SWAP_URL = os.getenv("LLAMA_SWAP_URL", "http://host.docker.internal:8090")
+LLAMA_SWAP_URL = os.getenv("LLAMA_SWAP_URL", "http://localhost:8090")
 LLM_BOOST_BASE_URL = os.getenv("LLM_BOOST_BASE_URL", "https://api.moonshot.ai/v1")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.minimax.io/v1")
 SCHWALPACA_API_KEY = os.getenv("SCHWALPACA_API_KEY", "")
@@ -566,6 +571,60 @@ def validate_scenario_synthesis(artifact, manifest, market_ids=None):
     return artifact
 
 
+def render_observation_reference_index(manifest) -> str:
+    """Give the live report generator resolvable evidence IDs, not raw authority."""
+    validate_observation_manifest(manifest)
+    lines = [
+        "## Observation Reference Index",
+        "",
+        "Use these IDs exactly in the machine-readable scenario block.",
+        "Market observations belong only in `market_observation_ids`; they are "
+        "not independent confirmation.",
+        "",
+    ]
+    for observation in manifest["observations"]:
+        lines.append(
+            f"- `{observation['observation_id']}` | "
+            f"{observation['source_id']} | status={observation['status']} | "
+            f"type={observation['source_type']} | "
+            f"market_derived={str(observation['market_derived']).lower()} | "
+            f"independence_group={observation['independence_group']}"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def extract_scenario_synthesis(
+    report_text,
+    manifest,
+    *,
+    report_id,
+    generated_at,
+):
+    """Extract and validate the one machine-readable block from a live report."""
+    marker = "## Scenario Synthesis (Machine-Readable)"
+    marker_index = report_text.find(marker)
+    if marker_index < 0:
+        raise ValueError("live report omitted the scenario synthesis marker")
+    block = report_text[marker_index + len(marker):]
+    match = re.search(
+        r"```json\s*(\{.*?\})\s*```",
+        block,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if not match:
+        raise ValueError("live report omitted the scenario synthesis JSON block")
+    try:
+        artifact = json.loads(match.group(1))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"live scenario JSON is invalid: {error}") from error
+    artifact["schema_version"] = "scenario-synthesis.v1"
+    artifact["report_id"] = report_id
+    artifact["generated_at"] = _iso_or_none(generated_at)
+    validate_scenario_synthesis(artifact, manifest)
+    return artifact
+
+
 def render_scenario_markdown(artifact, manifest) -> str:
     validate_scenario_synthesis(artifact, manifest)
     hypotheses = artifact["hypotheses"]
@@ -676,6 +735,22 @@ def render_scenario_markdown(artifact, manifest) -> str:
     )
     lines.append("")
     return "\n".join(lines)
+
+
+def append_preserved_simulation(canonical_markdown, simulation_markdown) -> str:
+    """Retain the full simulation while distinguishing analysis from evidence."""
+    if not simulation_markdown.strip():
+        raise ValueError("simulation narrative is empty")
+    return (
+        canonical_markdown.rstrip()
+        + "\n\n"
+        + "## Model-derived simulation and tradeable implications\n\n"
+        + "> This preserved simulation layer explores conditional market reactions. "
+        + "Its narrative and trading signals are model-derived hypotheses—not "
+        + "verified observations, outcome probabilities, or trade recommendations.\n\n"
+        + simulation_markdown.strip()
+        + "\n"
+    )
 
 
 def legacy_consumer_diff():
@@ -827,21 +902,41 @@ def _section(title, body):
 _TIMEOUT = 10
 
 SIMULATION_REQUIREMENT = """\
-Simulate how active traders, market analysts, institutional investors, retail \
-traders, geopolitical analysts, and financial media would react to the \
-intelligence signals described in this brief over the next 24-48 hours.
+Use the social simulation to examine plausible reactions to the supplied \
+observations over the next 24-48 hours. This is evidence and scenario synthesis, \
+not an oracle, trading recommendation, or search for an exploitable edge.
 
-Focus on:
-1. Which narratives gain traction and which fade — what does the crowd latch onto?
-2. Sentiment shifts across asset classes (equities, energy, bonds, crypto, defense)
-3. Time-delayed correlations the market hasn't priced in yet — 2nd and 3rd order effects
-4. Where retail and institutional sentiment diverge — that gap is often the edge
-5. Sector rotation signals — which sectors see inflows vs outflows based on this intel
-6. Risk-off vs risk-on sentiment trajectory — are participants hedging or reaching?
+Separate:
+1. What the supplied observations directly establish.
+2. What can be inferred, with supporting and contradicting observation IDs.
+3. What remains unknown.
+4. At least two genuinely competing conditional scenarios when evidence permits.
+5. Concrete falsifiers and watch conditions.
+6. What named market observations currently price.
+7. Conditional tradeable implications: affected assets or sectors, direction
+   under each scenario, the evidence IDs behind it, and what would invalidate it.
 
-The goal is to identify exploitable trading edges: asymmetric information advantages, \
-narrative momentum before consensus forms, and cross-domain correlations that most \
-market participants will miss or react to slowly.\
+Confidence must be low, medium, or high and describes evidence quality only. \
+Never invent an outcome probability. Never treat a market observation as \
+independent confirmation of a non-market claim. Polymarket observations sharing \
+the `polymarket` independence group are one crowd-information family.
+
+The final report MUST end with the exact heading:
+## Scenario Synthesis (Machine-Readable)
+
+Under that heading, emit one fenced `json` object with:
+`schema_version`, `report_id`, `generated_at`, and `hypotheses`.
+Each hypothesis must contain exactly:
+`hypothesis_id`, `claim`, `horizon` (`start`, `end`), `epistemic_status`
+(`observed`, `inferred`, `unknown`), `confidence` (`low`, `medium`, `high`),
+`supporting_observation_ids`, `contradicting_observation_ids`, `unknowns`,
+`falsifiers`, `watch_conditions`, `affected_entities`, and
+`market_observation_ids`.
+
+Use only IDs from the Observation Reference Index. Put market IDs only in
+`market_observation_ids`. Use null horizon boundaries when the evidence does not
+support a time boundary. The metadata values may be placeholders; the publisher
+sets them after validation.\
 """
 
 # ---------------------------------------------------------------------------
@@ -2502,37 +2597,73 @@ def run_pipeline(
     print(f"  Report:     {report_id}")
     print(f"{'='*60}")
 
-    # Save report markdown locally
+    # Preserve the complete backend simulation as a non-discoverable source
+    # artifact. Publish the evidence/scenario rendering first, followed by the
+    # original model-derived narrative and trading implications.
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     ts = _now().strftime("%Y%m%d_%H%M%S")
+    artifact_report_id = f"prediction_{ts}"
     report_path = OUTPUT_DIR / f"prediction_{ts}.md"
+    simulation_path = OUTPUT_DIR / f"simulation_{ts}.md"
     md_content = report.get("markdown_content", "")
-    if md_content:
-        try:
-            _atomic_write_text(report_path, md_content, _validate_report_text)
-        except ValueError as error:
-            print(f"  FAILED: {error}")
-            sys.exit(1)
-        print(f"  Report saved: {report_path}")
-    else:
+    if not md_content:
         # Hard fail — the Apr 15 incident was exactly this: pipeline reported
         # success but the markdown came back empty. Silent warning = silent loss.
         print("  FAILED: report markdown was empty — pipeline returned no content")
         sys.exit(1)
 
-    final_manifest_path = None
     saved_manifest_path = state.get("manifest_path") or manifest_path
-    if saved_manifest_path and Path(saved_manifest_path).is_file():
-        manifest = json.loads(Path(saved_manifest_path).read_text(encoding="utf-8"))
-        manifest["report_id"] = f"prediction_{ts}"
-        manifest["generated_at"] = _now().isoformat()
+    if not saved_manifest_path or not Path(saved_manifest_path).is_file():
+        print("  FAILED: observation manifest input is missing")
+        sys.exit(1)
+    try:
+        _atomic_write_text(simulation_path, md_content, _validate_report_text)
+        artifact_time = _now().isoformat()
+        manifest = json.loads(
+            Path(saved_manifest_path).read_text(encoding="utf-8")
+        )
+        manifest["report_id"] = artifact_report_id
+        manifest["generated_at"] = artifact_time
+        validate_observation_manifest(manifest)
+        structured = extract_scenario_synthesis(
+            md_content,
+            manifest,
+            report_id=artifact_report_id,
+            generated_at=artifact_time,
+        )
+        canonical_markdown = append_preserved_simulation(
+            render_scenario_markdown(structured, manifest),
+            md_content,
+        )
+        _validate_report_text(canonical_markdown)
+
         final_manifest_path = OUTPUT_DIR / f"prediction_{ts}.manifest.json"
+        structured_path = OUTPUT_DIR / f"prediction_{ts}.json"
         _atomic_write_json(
             final_manifest_path,
             manifest,
             validate_observation_manifest,
         )
-        print(f"  Manifest saved: {final_manifest_path}")
+        _atomic_write_json(
+            structured_path,
+            structured,
+            lambda value: validate_scenario_synthesis(value, manifest),
+        )
+        # Publish Markdown last so discovery never sees a report without both
+        # validated schema siblings.
+        _atomic_write_text(
+            report_path,
+            canonical_markdown,
+            _validate_report_text,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        print(f"  FAILED: scenario publication rejected: {error}")
+        sys.exit(1)
+
+    print(f"  Scenario report saved: {report_path}")
+    print(f"  Original simulation saved: {simulation_path}")
+    print(f"  Structured artifact saved: {structured_path}")
+    print(f"  Manifest saved: {final_manifest_path}")
 
     # VERIFY: a prediction file for today exists with non-trivial size.
     # Cron health check used to just look at process exit status — silent
@@ -2553,11 +2684,8 @@ def run_pipeline(
     _atomic_write_text(brief_out, Path(md_path).read_text(encoding="utf-8"))
     print(f"  Brief saved: {brief_out}")
 
-    # Translate the report to English (Discovered 2026-07-06: the OASIS
-    # pipeline produces Chinese output, which the schwalpaca agent
-    # understands via LLM but limits direct readability. Producing an
-    # English sibling file in parallel — Chinese stays as canonical
-    # source, English for downstream consumers).
+    # Preserve the established English sibling for direct readers and downstream
+    # consumers. The canonical report remains untouched if translation fails.
     try:
         translate_report_to_english(report_path)
     except Exception as e:
@@ -2569,11 +2697,9 @@ def run_pipeline(
         "simulation_id": simulation_id,
         "report_id": report_id,
         "report_path": str(report_path),
-        "manifest_path": (
-            str(final_manifest_path)
-            if final_manifest_path
-            else None
-        ),
+        "simulation_path": str(simulation_path),
+        "structured_path": str(structured_path),
+        "manifest_path": str(final_manifest_path),
     }
 
 
@@ -3187,6 +3313,7 @@ def main():
         fetched_at=manifest_fetched_at,
     )
     print(f"  Observation manifest: {len(manifest['observations'])} observations")
+    md += "\n" + render_observation_reference_index(manifest)
 
     # Write to temp file (or output dir for dry-run)
     if args.dry_run:
