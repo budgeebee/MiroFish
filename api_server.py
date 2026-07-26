@@ -169,6 +169,42 @@ def find_last_valid_report(output_dir=None):
     return matches[0] if matches else None
 
 
+def artifact_sibling(report_path, kind):
+    report_path = Path(report_path)
+    stem = report_path.stem
+    if stem.endswith("_en"):
+        stem = stem[:-3]
+    suffix = {
+        "manifest": ".manifest.json",
+        "structured": ".json",
+    }[kind]
+    return report_path.with_name(f"{stem}{suffix}")
+
+
+def load_today_artifact(kind):
+    report_path, today = find_todays_report()
+    if not report_path:
+        raise HTTPException(404, f"No report for {today}")
+    artifact_path = artifact_sibling(report_path, kind)
+    try:
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise HTTPException(404, f"No {kind} artifact for {today}") from None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise HTTPException(500, f"Invalid {kind} artifact: {error}") from error
+    expected_schema = {
+        "manifest": "observation-manifest.v1",
+        "structured": "scenario-synthesis.v1",
+    }[kind]
+    if artifact.get("schema_version") != expected_schema:
+        raise HTTPException(500, f"Invalid {kind} schema")
+    if artifact.get("report_id") != artifact_path.name.removesuffix(
+        ".manifest.json" if kind == "manifest" else ".json"
+    ):
+        raise HTTPException(500, f"{kind} report ID does not match its filename")
+    return artifact
+
+
 def kill_zombie_sims():
     try:
         r = subprocess.run(
@@ -304,6 +340,16 @@ def output_today_full():
     if not path:
         raise HTTPException(404, f"No report for {today}")
     return path.read_text(encoding="utf-8")
+
+
+@app.get("/output/today/manifest")
+def output_today_manifest():
+    return load_today_artifact("manifest")
+
+
+@app.get("/output/today/structured")
+def output_today_structured():
+    return load_today_artifact("structured")
 
 
 @app.post("/run")

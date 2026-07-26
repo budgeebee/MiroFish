@@ -1,0 +1,256 @@
+{
+  "report_id": "prediction_cp0_fixture",
+  "fetched_at": "2026-07-25T12:00:00Z",
+  "crucix": {
+    "crucix": {
+      "timestamp": "2026-07-25T12:00:00Z",
+      "sourcesQueried": 4,
+      "sourcesOk": 3,
+      "sourcesFailed": 1
+    },
+    "sourceHealth": {
+      "Adanos": {
+        "status": "degraded",
+        "sourceType": "osint",
+        "independenceGroup": "adanos",
+        "marketDerived": false
+      },
+      "FRED": {
+        "status": "unavailable",
+        "sourceType": "macro",
+        "independenceGroup": "fred",
+        "marketDerived": false,
+        "error": "fixture credential intentionally absent"
+      },
+      "GDELT": {
+        "status": "ok",
+        "sourceType": "news",
+        "independenceGroup": "gdelt",
+        "marketDerived": false
+      },
+      "Polymarket": {
+        "status": "ok",
+        "sourceType": "market",
+        "independenceGroup": "polymarket",
+        "marketDerived": true
+      }
+    },
+    "sources": {
+      "Adanos": {
+        "status": "partial",
+        "timestamp": "2026-07-25T11:59:30Z",
+        "polymarket": [
+          {
+            "ticker": "FIXTURE",
+            "sentiment_score": 0.12
+          }
+        ],
+        "reddit": [
+          {
+            "ticker": "FIXTURE",
+            "sentiment_score": -0.08
+          }
+        ],
+        "x": [],
+        "sectionProvenance": {
+          "polymarket": {
+            "sourceType": "market",
+            "marketDerived": true,
+            "independenceGroup": "polymarket"
+          },
+          "reddit": {
+            "sourceType": "news",
+            "marketDerived": false,
+            "independenceGroup": "reddit"
+          },
+          "x": {
+            "sourceType": "news",
+            "marketDerived": false,
+            "independenceGroup": "x"
+          }
+        }
+      },
+      "GDELT": {
+        "status": "ok",
+        "totalArticles": 2,
+        "conflicts": [
+          {
+            "title": "Fixture ceasefire talks continue"
+          },
+          {
+            "title": "Fixture shipping route remains constrained"
+          }
+        ]
+      },
+      "Polymarket": {
+        "status": "ok",
+        "timestamp": "2026-07-25T12:00:00Z",
+        "sourceType": "market",
+        "marketDerived": true,
+        "independenceGroup": "polymarket",
+        "top": [
+          {
+            "venueContractId": "fixture-contract",
+            "outcomeLabel": "Yes",
+            "question": "Will the fixture agreement be signed?",
+            "bestBid": 0.42,
+            "bestAsk": 0.46,
+            "mid": 0.44,
+            "last": 0.43,
+            "observedAt": "2026-07-25T11:58:00Z",
+            "fetchedAt": "2026-07-25T12:00:00Z",
+            "marketDerived": true,
+            "independenceGroup": "polymarket"
+          }
+        ]
+      }
+    }
+  },
+  "supplements": {
+    "Supplement/InsiderCapitol": {
+      "payload": {
+        "n_new_disclosures": 1,
+        "hot_sectors": [
+          {
+            "sector": "Industrials",
+            "n_purchases": 1
+          }
+        ]
+      },
+      "source_type": "osint",
+      "independence_group": "insider-capitol",
+      "market_derived": false,
+      "status": "ok",
+      "fetched_at": "2026-07-25T12:00:00Z"
+    },
+    "Supplement/NewsAggregator": {
+      "payload": [
+        {
+          "source": "Fixture Wire",
+          "title": "Negotiators schedule another meeting",
+          "time": "2026-07-25T11:55:00Z"
+        }
+      ],
+      "source_type": "news",
+      "independence_group": "news-aggregator",
+      "market_derived": false,
+      "status": "ok",
+      "fetched_at": "2026-07-25T12:00:00Z",
+      "observed_at": "2026-07-25T11:55:00Z"
+    }
+  },
+  "hypotheses": [
+    {
+      "hypothesis_id": "observed-negotiations",
+      "claim": "Multiple non-market feeds record continuing negotiations.",
+      "horizon": {
+        "start": "2026-07-25T12:00:00Z",
+        "end": "2026-07-27T12:00:00Z"
+      },
+      "epistemic_status": "observed",
+      "confidence": "high",
+      "supporting_source_ids": [
+        "Crucix/GDELT",
+        "Supplement/NewsAggregator"
+      ],
+      "contradicting_observation_ids": [],
+      "unknowns": [],
+      "falsifiers": [
+        "Both independent news feeds retract the negotiation reports."
+      ],
+      "watch_conditions": [
+        "A named party publishes an official meeting schedule."
+      ],
+      "affected_entities": [
+        "fixture negotiators"
+      ],
+      "market_source_ids": []
+    },
+    {
+      "hypothesis_id": "inferred-narrative-persistence",
+      "claim": "The negotiation narrative may persist while the shipping constraint remains unresolved.",
+      "horizon": {
+        "start": "2026-07-25T12:00:00Z",
+        "end": "2026-07-27T12:00:00Z"
+      },
+      "epistemic_status": "inferred",
+      "confidence": "medium",
+      "supporting_source_ids": [
+        "Crucix/GDELT"
+      ],
+      "contradicting_source_ids": [
+        "Crucix/Adanos/reddit"
+      ],
+      "unknowns": [
+        "Whether negotiators have authority to sign an agreement."
+      ],
+      "falsifiers": [
+        "The shipping constraint clears without an agreement."
+      ],
+      "watch_conditions": [
+        "Official shipping notices report restored transit."
+      ],
+      "affected_entities": [
+        "shipping operators",
+        "industrial firms"
+      ],
+      "market_source_ids": [
+        "Crucix/Polymarket",
+        "Crucix/Adanos/polymarket"
+      ]
+    },
+    {
+      "hypothesis_id": "unknown-signing-authority",
+      "claim": "The fixture does not establish who can authorize a binding agreement.",
+      "horizon": {
+        "start": null,
+        "end": null
+      },
+      "epistemic_status": "unknown",
+      "confidence": "low",
+      "supporting_observation_ids": [],
+      "contradicting_observation_ids": [],
+      "unknowns": [
+        "The identity and mandate of the signing authority."
+      ],
+      "falsifiers": [
+        "An official mandate names the authorized signer."
+      ],
+      "watch_conditions": [
+        "Publication of a signed mandate or delegation."
+      ],
+      "affected_entities": [
+        "fixture negotiators"
+      ],
+      "market_observation_ids": []
+    },
+    {
+      "hypothesis_id": "inferred-operational-resolution",
+      "claim": "The negotiation narrative may fade if the shipping constraint clears through operational action.",
+      "horizon": {
+        "start": "2026-07-25T12:00:00Z",
+        "end": "2026-07-27T12:00:00Z"
+      },
+      "epistemic_status": "inferred",
+      "confidence": "low",
+      "supporting_source_ids": [
+        "Crucix/GDELT"
+      ],
+      "contradicting_observation_ids": [],
+      "unknowns": [
+        "Whether the shipping constraint can clear without a negotiated agreement."
+      ],
+      "falsifiers": [
+        "Operational notices state that only a negotiated agreement can restore transit."
+      ],
+      "watch_conditions": [
+        "Shipping notices report restored transit before an agreement."
+      ],
+      "affected_entities": [
+        "shipping operators",
+        "industrial firms"
+      ],
+      "market_observation_ids": []
+    }
+  ]
+}

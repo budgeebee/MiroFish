@@ -1,0 +1,55 @@
+{
+  "manifest_schema": "observation-manifest.v1",
+  "observation_schema": "observation.v1",
+  "observation_count": 8,
+  "scenario_schema": "scenario-synthesis.v1",
+  "hypothesis_count": 4,
+  "required_sections": [
+    "What is observed",
+    "What can be inferred",
+    "What remains unknown",
+    "Competing scenarios",
+    "Falsifiers",
+    "Watch conditions",
+    "What the crowd currently prices"
+  ],
+  "legacy_consumer_diff": {
+    "schema_version": "legacy-consumer-diff.v1",
+    "legacy_surfaces": {
+      "/output/today": {
+        "preserved_fields": [
+          "available",
+          "date",
+          "path",
+          "title",
+          "chapters",
+          "total_chars"
+        ],
+        "lost_fields": []
+      },
+      "/output/today/full": {
+        "preserved_fields": [
+          "raw_markdown"
+        ],
+        "lost_fields": []
+      }
+    },
+    "new_surfaces": {
+      "/output/today/manifest": [
+        "schema_version",
+        "report_id",
+        "generated_at",
+        "observations"
+      ],
+      "/output/today/structured": [
+        "schema_version",
+        "report_id",
+        "generated_at",
+        "hypotheses"
+      ]
+    },
+    "deprecated_fields_after_phase_1": [
+      "unstructured_prediction_only_interpretation"
+    ]
+  }
+}

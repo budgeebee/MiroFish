@@ -17,8 +17,10 @@ Environment:
 """
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -57,6 +59,39 @@ LLM_BOOST_BASE_URL = os.getenv("LLM_BOOST_BASE_URL", "https://api.moonshot.ai/v1
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.minimax.io/v1")
 SCHWALPACA_API_KEY = os.getenv("SCHWALPACA_API_KEY", "")
 REPORT_MIN_BYTES = 1000
+OBSERVATION_STATUSES = {"ok", "degraded", "unavailable", "error", "timeout"}
+SOURCE_TYPES = {"market", "osint", "news", "macro", "portfolio", "model"}
+EPISTEMIC_STATUSES = {"observed", "inferred", "unknown"}
+CONFIDENCE_LEVELS = {"low", "medium", "high"}
+OBSERVATION_FIELDS = {
+    "schema_version",
+    "observation_id",
+    "source_id",
+    "source_type",
+    "independence_group",
+    "observed_at",
+    "fetched_at",
+    "as_of",
+    "staleness_seconds",
+    "content_sha256",
+    "market_derived",
+    "status",
+    "payload_ref",
+}
+HYPOTHESIS_FIELDS = {
+    "hypothesis_id",
+    "claim",
+    "horizon",
+    "epistemic_status",
+    "confidence",
+    "supporting_observation_ids",
+    "contradicting_observation_ids",
+    "unknowns",
+    "falsifiers",
+    "watch_conditions",
+    "affected_entities",
+    "market_observation_ids",
+}
 
 
 def _now():
@@ -100,6 +135,18 @@ def _atomic_write_text(path: Path, text: str, validator=None):
             pass
 
 
+def _atomic_write_json(path: Path, value, validator=None):
+    """Atomically publish JSON after parsing and schema validation."""
+    text = json.dumps(value, indent=2, ensure_ascii=False) + "\n"
+
+    def validate_text(published_text):
+        parsed = json.loads(published_text)
+        if validator:
+            validator(parsed)
+
+    _atomic_write_text(path, text, validate_text)
+
+
 def _is_valid_report(path: Path) -> bool:
     try:
         text = path.read_text(encoding="utf-8")
@@ -107,6 +154,568 @@ def _is_valid_report(path: Path) -> bool:
         return True
     except (OSError, UnicodeDecodeError, ValueError):
         return False
+
+
+def _canonical_json(value) -> str:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+def _sha256(value) -> str:
+    if not isinstance(value, str):
+        value = _canonical_json(value)
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _parse_timestamp(value):
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"invalid timestamp: {value!r}")
+    normalized = value.strip().replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        raise ValueError(f"timestamp lacks timezone: {value}")
+    return parsed
+
+
+def _iso_or_none(value):
+    if value is None:
+        return None
+    return _parse_timestamp(value).isoformat().replace("+00:00", "Z")
+
+
+def _latest_market_observed_at(payload):
+    candidates = []
+    for key in ("markets", "top", "signals"):
+        for item in payload.get(key, []) if isinstance(payload, dict) else []:
+            if not isinstance(item, dict):
+                continue
+            observed = item.get("observedAt") or item.get("observed_at")
+            if observed:
+                try:
+                    candidates.append(_parse_timestamp(observed))
+                except ValueError:
+                    continue
+    if not candidates:
+        return None
+    return max(candidates).isoformat().replace("+00:00", "Z")
+
+
+def _observation(
+    source_id,
+    payload,
+    *,
+    source_type,
+    independence_group,
+    market_derived,
+    status,
+    fetched_at,
+    payload_ref,
+    observed_at=None,
+    as_of=None,
+):
+    fetched = _parse_timestamp(fetched_at)
+    observed = _parse_timestamp(observed_at) if observed_at else None
+    as_of_value = _parse_timestamp(as_of) if as_of else None
+    payload_sha = _sha256(payload)
+    observation_key = f"{source_id}\0{payload_sha}"
+    observation_id = f"obs-{_sha256(observation_key)[:20]}"
+    staleness = (
+        max(0, int((fetched - observed).total_seconds()))
+        if observed
+        else None
+    )
+    return {
+        "schema_version": "observation.v1",
+        "observation_id": observation_id,
+        "source_id": source_id,
+        "source_type": source_type,
+        "independence_group": independence_group,
+        "observed_at": _iso_or_none(observed_at),
+        "fetched_at": fetched.isoformat().replace("+00:00", "Z"),
+        "as_of": (
+            as_of_value.isoformat().replace("+00:00", "Z")
+            if as_of_value
+            else None
+        ),
+        "staleness_seconds": staleness,
+        "content_sha256": payload_sha,
+        "market_derived": bool(market_derived),
+        "status": status,
+        "payload_ref": payload_ref,
+    }
+
+
+def build_observation_manifest(
+    crucix_data: dict,
+    supplements: dict | None = None,
+    *,
+    report_id: str,
+    fetched_at: str | None = None,
+):
+    """Convert Crucix health and supplemental inputs to observation.v1."""
+    health_by_source = crucix_data.get("sourceHealth", {})
+    sources = crucix_data.get("sources", {})
+    crucix_fetched_at = (
+        fetched_at
+        or crucix_data.get("crucix", {}).get("timestamp")
+        or _now().isoformat()
+    )
+    observations = []
+
+    for name in sorted(health_by_source):
+        health = health_by_source[name] or {}
+        payload = sources.get(name)
+        status = health.get("status", "error")
+        if name == "Adanos" and isinstance(payload, dict):
+            section_provenance = payload.get("sectionProvenance", {})
+            emitted_section = False
+            for section in sorted(section_provenance):
+                if section not in payload:
+                    continue
+                provenance = section_provenance[section] or {}
+                section_payload = payload.get(section)
+                observations.append(_observation(
+                    f"Crucix/Adanos/{section}",
+                    section_payload,
+                    source_type=provenance.get("sourceType", "osint"),
+                    independence_group=provenance.get(
+                        "independenceGroup",
+                        f"adanos-{section}",
+                    ),
+                    market_derived=provenance.get("marketDerived", False),
+                    status=status,
+                    fetched_at=payload.get("timestamp") or crucix_fetched_at,
+                    payload_ref=f"/sources/Adanos/{section}",
+                    observed_at=(
+                        _latest_market_observed_at({"markets": section_payload})
+                        if provenance.get("marketDerived")
+                        else None
+                    ),
+                ))
+                emitted_section = True
+            if emitted_section:
+                continue
+
+        source_type = health.get("sourceType") or (
+            payload.get("sourceType") if isinstance(payload, dict) else None
+        ) or "osint"
+        independence_group = health.get("independenceGroup") or (
+            payload.get("independenceGroup") if isinstance(payload, dict) else None
+        ) or name.lower()
+        market_derived = health.get("marketDerived", False) or (
+            payload.get("marketDerived", False)
+            if isinstance(payload, dict)
+            else False
+        )
+        observed_at = (
+            _latest_market_observed_at(payload)
+            if market_derived and isinstance(payload, dict)
+            else None
+        )
+        source_fetched_at = (
+            payload.get("fetchedAt") or payload.get("timestamp")
+            if isinstance(payload, dict)
+            else None
+        ) or crucix_fetched_at
+        payload_for_hash = payload if name in sources else health
+        observations.append(_observation(
+            f"Crucix/{name}",
+            payload_for_hash,
+            source_type=source_type,
+            independence_group=independence_group,
+            market_derived=market_derived,
+            status=status,
+            fetched_at=source_fetched_at,
+            payload_ref=(
+                f"/sources/{name}"
+                if name in sources
+                else f"/sourceHealth/{name}"
+            ),
+            observed_at=observed_at,
+            as_of=(
+                payload.get("asOf") or payload.get("as_of")
+                if isinstance(payload, dict)
+                else None
+            ),
+        ))
+
+    for source_id in sorted(supplements or {}):
+        item = supplements[source_id]
+        payload = item.get("payload")
+        observations.append(_observation(
+            source_id,
+            payload,
+            source_type=item["source_type"],
+            independence_group=item["independence_group"],
+            market_derived=item.get("market_derived", False),
+            status=item.get("status", "ok"),
+            fetched_at=item.get("fetched_at") or crucix_fetched_at,
+            payload_ref=item.get("payload_ref", f"/supplements/{source_id}"),
+            observed_at=item.get("observed_at"),
+            as_of=item.get("as_of"),
+        ))
+
+    manifest = {
+        "schema_version": "observation-manifest.v1",
+        "report_id": report_id,
+        "generated_at": _iso_or_none(crucix_fetched_at),
+        "observations": observations,
+    }
+    validate_observation_manifest(manifest)
+    return manifest
+
+
+def validate_observation_manifest(manifest):
+    if set(manifest) != {
+        "schema_version",
+        "report_id",
+        "generated_at",
+        "observations",
+    }:
+        raise ValueError("manifest fields do not match observation-manifest.v1")
+    if manifest.get("schema_version") != "observation-manifest.v1":
+        raise ValueError("unknown manifest schema")
+    if not isinstance(manifest.get("report_id"), str) or not manifest["report_id"]:
+        raise ValueError("manifest report ID is missing")
+    _parse_timestamp(manifest.get("generated_at"))
+    if not isinstance(manifest.get("observations"), list):
+        raise ValueError("manifest observations must be a list")
+    ids = set()
+    for observation in manifest.get("observations", []):
+        if set(observation) != OBSERVATION_FIELDS:
+            raise ValueError("observation fields do not match observation.v1")
+        observation_id = observation.get("observation_id")
+        if not observation_id or observation_id in ids:
+            raise ValueError(f"duplicate or missing observation ID: {observation_id}")
+        ids.add(observation_id)
+        if observation.get("schema_version") != "observation.v1":
+            raise ValueError(f"{observation_id}: unknown observation schema")
+        if observation.get("status") not in OBSERVATION_STATUSES:
+            raise ValueError(f"{observation_id}: invalid status")
+        if observation.get("source_type") not in SOURCE_TYPES:
+            raise ValueError(f"{observation_id}: invalid source type")
+        for field in ("source_id", "independence_group", "payload_ref"):
+            if not isinstance(observation.get(field), str) or not observation[field]:
+                raise ValueError(f"{observation_id}: missing {field}")
+        staleness = observation.get("staleness_seconds")
+        if staleness is not None and (
+            not isinstance(staleness, int) or staleness < 0
+        ):
+            raise ValueError(f"{observation_id}: invalid staleness")
+        for field in ("fetched_at", "observed_at", "as_of"):
+            if observation.get(field) is not None:
+                _parse_timestamp(observation[field])
+        content_sha = observation.get("content_sha256", "")
+        if not re.fullmatch(r"[0-9a-f]{64}", content_sha):
+            raise ValueError(f"{observation_id}: invalid content hash")
+        if (
+            observation.get("source_type") == "market"
+            or observation.get("market_derived")
+        ) and (
+            observation.get("source_type") != "market"
+            or not observation.get("market_derived")
+            or not observation.get("independence_group")
+        ):
+            raise ValueError(f"{observation_id}: market provenance is incomplete")
+    return manifest
+
+
+def build_scenario_synthesis(manifest, hypotheses, *, generated_at=None):
+    validate_observation_manifest(manifest)
+    by_source = {
+        observation["source_id"]: observation["observation_id"]
+        for observation in manifest["observations"]
+    }
+    market_ids = {
+        observation["observation_id"]
+        for observation in manifest["observations"]
+        if observation["market_derived"]
+    }
+
+    def resolve(draft, id_field, source_field):
+        explicit = list(draft.get(id_field, []))
+        for source_id in draft.get(source_field, []):
+            if source_id not in by_source:
+                raise ValueError(f"unknown evidence source: {source_id}")
+            explicit.append(by_source[source_id])
+        return explicit
+
+    rendered = []
+    for draft in hypotheses:
+        rendered.append({
+            "hypothesis_id": draft["hypothesis_id"],
+            "claim": draft["claim"],
+            "horizon": draft.get("horizon", {"start": None, "end": None}),
+            "epistemic_status": draft["epistemic_status"],
+            "confidence": draft["confidence"],
+            "supporting_observation_ids": resolve(
+                draft,
+                "supporting_observation_ids",
+                "supporting_source_ids",
+            ),
+            "contradicting_observation_ids": resolve(
+                draft,
+                "contradicting_observation_ids",
+                "contradicting_source_ids",
+            ),
+            "unknowns": list(draft.get("unknowns", [])),
+            "falsifiers": list(draft.get("falsifiers", [])),
+            "watch_conditions": list(draft.get("watch_conditions", [])),
+            "affected_entities": list(draft.get("affected_entities", [])),
+            "market_observation_ids": resolve(
+                draft,
+                "market_observation_ids",
+                "market_source_ids",
+            ),
+        })
+    artifact = {
+        "schema_version": "scenario-synthesis.v1",
+        "report_id": manifest["report_id"],
+        "generated_at": _iso_or_none(
+            generated_at or manifest["generated_at"]
+        ),
+        "hypotheses": rendered,
+    }
+    validate_scenario_synthesis(artifact, manifest, market_ids=market_ids)
+    return artifact
+
+
+def validate_scenario_synthesis(artifact, manifest, market_ids=None):
+    if set(artifact) != {
+        "schema_version",
+        "report_id",
+        "generated_at",
+        "hypotheses",
+    }:
+        raise ValueError("scenario fields do not match scenario-synthesis.v1")
+    if artifact.get("schema_version") != "scenario-synthesis.v1":
+        raise ValueError("unknown scenario schema")
+    if artifact.get("report_id") != manifest.get("report_id"):
+        raise ValueError("scenario and manifest report IDs differ")
+    _parse_timestamp(artifact.get("generated_at"))
+    if not isinstance(artifact.get("hypotheses"), list):
+        raise ValueError("scenario hypotheses must be a list")
+    observation_ids = {
+        observation["observation_id"]
+        for observation in manifest.get("observations", [])
+    }
+    market_ids = market_ids if market_ids is not None else {
+        observation["observation_id"]
+        for observation in manifest.get("observations", [])
+        if observation.get("market_derived")
+    }
+    hypothesis_ids = set()
+    for hypothesis in artifact.get("hypotheses", []):
+        field_difference = set(hypothesis) ^ HYPOTHESIS_FIELDS
+        if field_difference:
+            raise ValueError(
+                f"{hypothesis.get('hypothesis_id')}: hypothesis fields differ "
+                f"{sorted(field_difference)}"
+            )
+        hypothesis_id = hypothesis.get("hypothesis_id")
+        if not hypothesis_id or hypothesis_id in hypothesis_ids:
+            raise ValueError(f"duplicate or missing hypothesis ID: {hypothesis_id}")
+        hypothesis_ids.add(hypothesis_id)
+        if hypothesis.get("epistemic_status") not in EPISTEMIC_STATUSES:
+            raise ValueError(f"{hypothesis_id}: invalid epistemic status")
+        if hypothesis.get("confidence") not in CONFIDENCE_LEVELS:
+            raise ValueError(f"{hypothesis_id}: invalid confidence")
+        horizon = hypothesis.get("horizon", {})
+        if set(horizon) != {"start", "end"}:
+            raise ValueError(f"{hypothesis_id}: invalid horizon fields")
+        for boundary in ("start", "end"):
+            if horizon.get(boundary) is not None:
+                _parse_timestamp(horizon[boundary])
+        for field in (
+            "supporting_observation_ids",
+            "contradicting_observation_ids",
+            "market_observation_ids",
+        ):
+            dangling = set(hypothesis.get(field, [])) - observation_ids
+            if dangling:
+                raise ValueError(f"{hypothesis_id}: dangling evidence IDs {dangling}")
+        non_market_evidence = (
+            set(hypothesis.get("supporting_observation_ids", []))
+            | set(hypothesis.get("contradicting_observation_ids", []))
+        )
+        if non_market_evidence & market_ids:
+            raise ValueError(
+                f"{hypothesis_id}: market observations must use market evidence"
+            )
+        if not set(hypothesis.get("market_observation_ids", [])) <= market_ids:
+            raise ValueError(f"{hypothesis_id}: non-market ID in market evidence")
+        if not isinstance(hypothesis.get("claim"), str) or not hypothesis["claim"]:
+            raise ValueError(f"{hypothesis_id}: missing claim")
+        for field in (
+            "supporting_observation_ids",
+            "contradicting_observation_ids",
+            "unknowns",
+            "falsifiers",
+            "watch_conditions",
+            "affected_entities",
+            "market_observation_ids",
+        ):
+            if not isinstance(hypothesis.get(field), list):
+                raise ValueError(f"{hypothesis_id}: {field} must be a list")
+    return artifact
+
+
+def render_scenario_markdown(artifact, manifest) -> str:
+    validate_scenario_synthesis(artifact, manifest)
+    hypotheses = artifact["hypotheses"]
+    sections = [
+        ("What is observed", [
+            item for item in hypotheses if item["epistemic_status"] == "observed"
+        ]),
+        ("What can be inferred", [
+            item for item in hypotheses if item["epistemic_status"] == "inferred"
+        ]),
+    ]
+    lines = [
+        f"# Evidence-backed scenario brief — {artifact['report_id']}",
+        "",
+        "> Confidence labels describe evidence quality, not outcome probability.",
+        "",
+    ]
+    for title, items in sections:
+        lines.extend([f"## {title}", ""])
+        if not items:
+            lines.extend(["- None recorded.", ""])
+            continue
+        for item in items:
+            lines.append(
+                f"- **{item['hypothesis_id']} [{item['confidence']}]** "
+                f"{item['claim']}"
+            )
+            if item["supporting_observation_ids"]:
+                lines.append(
+                    "  - Supporting evidence: "
+                    + ", ".join(item["supporting_observation_ids"])
+                )
+            if item["contradicting_observation_ids"]:
+                lines.append(
+                    "  - Contradicting evidence: "
+                    + ", ".join(item["contradicting_observation_ids"])
+                )
+        lines.append("")
+
+    lines.extend(["## What remains unknown", ""])
+    unknown_values = [
+        (item["hypothesis_id"], value)
+        for item in hypotheses
+        for value in item["unknowns"]
+    ]
+    unknown_values.extend(
+        (item["hypothesis_id"], item["claim"])
+        for item in hypotheses
+        if item["epistemic_status"] == "unknown"
+        and item["claim"] not in item["unknowns"]
+    )
+    lines.extend(
+        [f"- **{hypothesis_id}:** {value}" for hypothesis_id, value in unknown_values]
+        or ["- None recorded."]
+    )
+    lines.append("")
+
+    lines.extend(["## Competing scenarios", ""])
+    competing = [
+        item for item in hypotheses if item["epistemic_status"] == "inferred"
+    ]
+    for item in competing:
+        lines.append(
+            f"- **{item['hypothesis_id']} [{item['confidence']}]** "
+            f"{item['claim']}"
+        )
+    if not competing:
+        lines.append("- None recorded.")
+    lines.append("")
+
+    for title, field in [
+        ("Falsifiers", "falsifiers"),
+        ("Watch conditions", "watch_conditions"),
+    ]:
+        lines.extend([f"## {title}", ""])
+        values = [
+            (item["hypothesis_id"], value)
+            for item in hypotheses
+            for value in item[field]
+        ]
+        lines.extend(
+            [f"- **{hypothesis_id}:** {value}" for hypothesis_id, value in values]
+            or ["- None recorded."]
+        )
+        lines.append("")
+
+    lines.extend(["## What the crowd currently prices", ""])
+    observations_by_id = {
+        item["observation_id"]: item
+        for item in manifest["observations"]
+    }
+    market_values = [
+        (
+            item["hypothesis_id"],
+            observations_by_id[observation_id],
+        )
+        for item in hypotheses
+        for observation_id in item["market_observation_ids"]
+    ]
+    lines.extend(
+        [
+            f"- **{hypothesis_id}:** `{observation['observation_id']}` from "
+            f"{observation['source_id']} "
+            f"(independence group: `{observation['independence_group']}`)"
+            for hypothesis_id, observation in market_values
+        ]
+        or ["- No market observations recorded."]
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def legacy_consumer_diff():
+    return {
+        "schema_version": "legacy-consumer-diff.v1",
+        "legacy_surfaces": {
+            "/output/today": {
+                "preserved_fields": [
+                    "available",
+                    "date",
+                    "path",
+                    "title",
+                    "chapters",
+                    "total_chars",
+                ],
+                "lost_fields": [],
+            },
+            "/output/today/full": {
+                "preserved_fields": ["raw_markdown"],
+                "lost_fields": [],
+            },
+        },
+        "new_surfaces": {
+            "/output/today/manifest": [
+                "schema_version",
+                "report_id",
+                "generated_at",
+                "observations",
+            ],
+            "/output/today/structured": [
+                "schema_version",
+                "report_id",
+                "generated_at",
+                "hypotheses",
+            ],
+        },
+        "deprecated_fields_after_phase_1": [
+            "unstructured_prediction_only_interpretation",
+        ],
+    }
 
 
 def _parallel_fetch(symbols, fetch_fn, max_workers=10):
@@ -1549,7 +2158,13 @@ def _clear_state():
         p.unlink()
 
 
-def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool = False):
+def run_pipeline(
+    md_path: str,
+    max_rounds: int,
+    project_name: str,
+    resume: bool = False,
+    manifest_path: str | None = None,
+):
     """Drive the full MiroFish pipeline with checkpoint/resume support.
 
     After each step, state is saved to .pipeline_state.json. If the pipeline
@@ -1572,6 +2187,7 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
             "md_path": md_path,
             "max_rounds": max_rounds,
             "project_name": project_name,
+            "manifest_path": manifest_path,
         }
         completed = 0
 
@@ -1904,6 +2520,20 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
         print("  FAILED: report markdown was empty — pipeline returned no content")
         sys.exit(1)
 
+    final_manifest_path = None
+    saved_manifest_path = state.get("manifest_path") or manifest_path
+    if saved_manifest_path and Path(saved_manifest_path).is_file():
+        manifest = json.loads(Path(saved_manifest_path).read_text(encoding="utf-8"))
+        manifest["report_id"] = f"prediction_{ts}"
+        manifest["generated_at"] = _now().isoformat()
+        final_manifest_path = OUTPUT_DIR / f"prediction_{ts}.manifest.json"
+        _atomic_write_json(
+            final_manifest_path,
+            manifest,
+            validate_observation_manifest,
+        )
+        print(f"  Manifest saved: {final_manifest_path}")
+
     # VERIFY: a prediction file for today exists with non-trivial size.
     # Cron health check used to just look at process exit status — silent
     # step-6 failures slipped through. This catches the file-missing case.
@@ -1939,6 +2569,11 @@ def run_pipeline(md_path: str, max_rounds: int, project_name: str, resume: bool 
         "simulation_id": simulation_id,
         "report_id": report_id,
         "report_path": str(report_path),
+        "manifest_path": (
+            str(final_manifest_path)
+            if final_manifest_path
+            else None
+        ),
     }
 
 
@@ -2102,6 +2737,37 @@ def main():
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
+    supplements = {}
+
+    def record_supplement(
+        source_id,
+        payload,
+        *,
+        source_type,
+        independence_group,
+        market_derived=False,
+        status=None,
+        observed_at=None,
+        as_of=None,
+    ):
+        if status is None:
+            if payload is None:
+                status = "unavailable"
+            elif hasattr(payload, "__len__") and len(payload) == 0:
+                status = "degraded"
+            else:
+                status = "ok"
+        supplements[source_id] = {
+            "payload": payload,
+            "source_type": source_type,
+            "independence_group": independence_group,
+            "market_derived": market_derived,
+            "status": status,
+            "fetched_at": _now().isoformat(),
+            "observed_at": observed_at,
+            "as_of": as_of,
+        }
+
     sweep_ts = data.get("crucix", {}).get("timestamp", "unknown")
     sources_ok = data.get("crucix", {}).get("sourcesOk", 0)
     source_health = data.get("sourceHealth", {})
@@ -2125,6 +2791,12 @@ def main():
     if not args.no_news:
         print("Fetching news-aggregator (8 global sources)...")
         news_items = fetch_news_aggregator(limit=12)
+        record_supplement(
+            "Supplement/NewsAggregator",
+            news_items,
+            source_type="news",
+            independence_group="news-aggregator",
+        )
         if news_items:
             news_md = news_to_markdown(news_items)
             md += "\n" + news_md
@@ -2134,6 +2806,12 @@ def main():
     # Fetch and append Insider Capitol congressional trading signal
     print("Fetching Insider Capitol congressional trading signal...")
     ic_signal = fetch_insider_capitol_signal()
+    record_supplement(
+        "Supplement/InsiderCapitol",
+        ic_signal,
+        source_type="osint",
+        independence_group="insider-capitol",
+    )
     if ic_signal:
         ic_md = insider_capitol_to_markdown(ic_signal)
         if ic_md:
@@ -2144,6 +2822,13 @@ def main():
     # Fetch social sentiment for held positions
     print("Fetching social sentiment for held positions...")
     held_symbols = get_held_symbols()
+    record_supplement(
+        "Supplement/SchwalpacaJournal",
+        {"open_symbols": sorted(held_symbols)},
+        source_type="portfolio",
+        independence_group="schwalpaca-journal",
+        status="ok" if SCHWALPACA_JOURNAL.is_file() else "unavailable",
+    )
     if held_symbols:
         print(f"  Held symbols: {', '.join(held_symbols)}")
         sentiments = {}
@@ -2156,6 +2841,12 @@ def main():
                 err = data.get('error', 'no data') if data else 'failed'
                 print(f"  ✗ {sym}: {err}")
         sentiment_md = sentiment_to_markdown(sentiments)
+        record_supplement(
+            "Supplement/SchwalpacaHeldSentiment",
+            sentiments,
+            source_type="news",
+            independence_group="schwalpaca-social-sentiment",
+        )
         if sentiment_md:
             md += "\n" + sentiment_md
             print(f"  Added sentiment for {len(sentiments)} symbols")
@@ -2164,6 +2855,13 @@ def main():
 
     # Cross-portfolio: Kalshi event-contract positions (context only, not enriched via schwalpaca APIs)
     kalshi_positions = get_held_kalshi_positions()
+    record_supplement(
+        "Supplement/KalshiJournal",
+        kalshi_positions,
+        source_type="portfolio",
+        independence_group="kalshi-journal",
+        status="ok" if KALSHI_JOURNAL.is_file() else "unavailable",
+    )
     if kalshi_positions:
         print(f"Cross-portfolio: {len(kalshi_positions)} open Kalshi position(s) (context only)...")
         kalshi_md = kalshi_positions_to_markdown(kalshi_positions)
@@ -2195,6 +2893,12 @@ def main():
 
         out = _parallel_fetch(held_symbols[:5], _held_news, max_workers=5)
         held_news = {s: a for s, a in out.items() if a}
+        record_supplement(
+            "Supplement/SchwalpacaHeldNews",
+            held_news,
+            source_type="news",
+            independence_group="schwalpaca-news",
+        )
         if held_news:
             held_news_md = screener_news_to_markdown(held_news)
             if held_news_md:
@@ -2204,6 +2908,13 @@ def main():
     # Fetch market movers (before screeners — screener candidate news uses movers)
     print("Fetching market movers...")
     movers = fetch_movers()
+    record_supplement(
+        "Supplement/SchwalpacaMovers",
+        movers,
+        source_type="market",
+        independence_group="schwalpaca-market-data",
+        market_derived=True,
+    )
     held_set = set(held_symbols) if held_symbols else set()
     if movers:
         non_held = [m for m in movers if m.get('symbol') not in held_set]
@@ -2217,6 +2928,13 @@ def main():
     # Fetch market screeners
     print("Fetching market screeners...")
     screeners = fetch_screeners()
+    record_supplement(
+        "Supplement/SchwalpacaScreeners",
+        screeners,
+        source_type="market",
+        independence_group="schwalpaca-market-data",
+        market_derived=True,
+    )
     if screeners:
         near_high = len(screeners.get("near_52w_high", []))
         unusual_vol = len(screeners.get("unusual_volume", []))
@@ -2261,6 +2979,12 @@ def main():
 
             out = _parallel_fetch(list(candidate_symbols)[:12], _cand_news, max_workers=10)
             candidate_news = {s: a for s, a in out.items() if a}
+            record_supplement(
+                "Supplement/SchwalpacaCandidateNews",
+                candidate_news,
+                source_type="news",
+                independence_group="schwalpaca-news",
+            )
             if candidate_news:
                 total_articles = sum(len(v) for v in candidate_news.values())
                 print(f"  Found {total_articles} articles across {len(candidate_news)} tickers")
@@ -2280,6 +3004,12 @@ def main():
         # Mover news (catalyst layer)
         print("Fetching mover news (past 3 days)...")
         mover_news = fetch_mover_news(movers, held_set, days=3)
+        record_supplement(
+            "Supplement/SchwalpacaMoverNews",
+            mover_news,
+            source_type="news",
+            independence_group="schwalpaca-news",
+        )
         if mover_news:
             total_articles = sum(len(v) for v in mover_news.values())
             print(f"  Found {total_articles} articles across {len(mover_news)} tickers")
@@ -2292,6 +3022,12 @@ def main():
         # Mover sentiment (narrative layer)
         print("Fetching mover sentiment...")
         mover_sentiments = fetch_mover_sentiment(movers, held_set)
+        record_supplement(
+            "Supplement/SchwalpacaMoverSentiment",
+            mover_sentiments,
+            source_type="news",
+            independence_group="schwalpaca-social-sentiment",
+        )
         if mover_sentiments:
             mover_sent_md = mover_sentiment_to_markdown(mover_sentiments)
             if mover_sent_md:
@@ -2330,6 +3066,12 @@ def main():
 
             out = _parallel_fetch(list(screener_syms)[:5], _screener_sent, max_workers=5)
             screener_sentiments = {s: d for s, d in out.items() if d}
+            record_supplement(
+                "Supplement/SchwalpacaScreenerSentiment",
+                screener_sentiments,
+                source_type="news",
+                independence_group="schwalpaca-social-sentiment",
+            )
             if screener_sentiments:
                 screener_sent_md = mover_sentiment_to_markdown(screener_sentiments)
                 if screener_sent_md:
@@ -2362,6 +3104,13 @@ def main():
             else:
                 print(f"  ✗ {sym}")
         indicators_md = indicators_to_markdown(all_indicators)
+        record_supplement(
+            "Supplement/SchwalpacaIndicators",
+            all_indicators,
+            source_type="market",
+            independence_group="schwalpaca-market-data",
+            market_derived=True,
+        )
         if indicators_md:
             md += "\n" + indicators_md
             print(f"  Added indicators for {len(all_indicators)} symbols")
@@ -2392,6 +3141,13 @@ def main():
             else:
                 print(f"  ✗ {sym}")
         flow_md = options_flow_to_markdown(all_flows)
+        record_supplement(
+            "Supplement/SchwalpacaOptionsFlow",
+            all_flows,
+            source_type="market",
+            independence_group="schwalpaca-market-data",
+            market_derived=True,
+        )
         if flow_md:
             md += "\n" + flow_md
             print(f"  Added options flow for {len(all_flows)} symbols")
@@ -2401,6 +3157,13 @@ def main():
     # Earnings calendar (next 7 days)
     print("Fetching earnings calendar (next 7 days)...")
     earnings = fetch_earnings(days_ahead=7)
+    record_supplement(
+        "Supplement/SchwalpacaEarnings",
+        earnings,
+        source_type="market",
+        independence_group="schwalpaca-market-data",
+        market_derived=True,
+    )
     if earnings:
         held_set_for_earnings = set(held_symbols) if held_symbols else set()
         earnings_md = earnings_to_markdown(earnings, held_set_for_earnings)
@@ -2413,13 +3176,33 @@ def main():
     else:
         print("  Earnings data unavailable")
 
+    try:
+        manifest_fetched_at = _iso_or_none(sweep_ts)
+    except ValueError:
+        manifest_fetched_at = _now().isoformat()
+    manifest = build_observation_manifest(
+        data,
+        supplements,
+        report_id=f"pending-{_now():%Y%m%d}",
+        fetched_at=manifest_fetched_at,
+    )
+    print(f"  Observation manifest: {len(manifest['observations'])} observations")
+
     # Write to temp file (or output dir for dry-run)
     if args.dry_run:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         ts = _now().strftime("%Y%m%d_%H%M%S")
         md_path = OUTPUT_DIR / f"brief_{ts}.md"
         _atomic_write_text(md_path, md)
+        manifest["report_id"] = f"brief_{ts}"
+        manifest_path = OUTPUT_DIR / f"brief_{ts}.manifest.json"
+        _atomic_write_json(
+            manifest_path,
+            manifest,
+            validate_observation_manifest,
+        )
         print(f"\n  Dry run — brief saved to: {md_path}")
+        print(f"  Dry run — manifest saved to: {manifest_path}")
         print(f"\n--- Preview (first 2000 chars) ---\n")
         print(md[:2000])
         return
@@ -2429,9 +3212,20 @@ def main():
     today = _now().strftime("%Y%m%d")
     md_path = str(OUTPUT_DIR / f".brief_{today}.md")
     _atomic_write_text(Path(md_path), md)
+    manifest_path = OUTPUT_DIR / f".observation_manifest_{today}.json"
+    _atomic_write_json(
+        manifest_path,
+        manifest,
+        validate_observation_manifest,
+    )
 
     project_name = args.project_name or f"Crucix Trading Intel {sweep_ts[:10]}"
-    run_pipeline(md_path, args.max_rounds, project_name)
+    run_pipeline(
+        md_path,
+        args.max_rounds,
+        project_name,
+        manifest_path=str(manifest_path),
+    )
 
 
 if __name__ == "__main__":

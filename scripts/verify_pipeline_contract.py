@@ -4,6 +4,7 @@
 import importlib.util
 import json
 import tempfile
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -182,18 +183,277 @@ def compose_fixture():
         check(required in compose, f"compose contract missing {required}")
 
 
+def expect_rejected(callback, expected_message):
+    try:
+        callback()
+    except ValueError as error:
+        check(
+            expected_message.lower() in str(error).lower(),
+            f"wrong rejection for {expected_message!r}: {error}",
+        )
+    else:
+        raise AssertionError(f"fixture was not rejected: {expected_message}")
+
+
+def scenario_contract_fixtures(temp_dir):
+    fixture = json.loads(
+        (ROOT / "fixtures/scenario-input.json").read_text(encoding="utf-8")
+    )
+    expected = json.loads(
+        (ROOT / "fixtures/scenario-expected-shape.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest = pipeline.build_observation_manifest(
+        fixture["crucix"],
+        fixture["supplements"],
+        report_id=fixture["report_id"],
+        fetched_at=fixture["fetched_at"],
+    )
+    second_manifest = pipeline.build_observation_manifest(
+        fixture["crucix"],
+        fixture["supplements"],
+        report_id=fixture["report_id"],
+        fetched_at=fixture["fetched_at"],
+    )
+    check(manifest == second_manifest, "manifest hashing is not deterministic")
+    check(
+        manifest["schema_version"] == expected["manifest_schema"],
+        "wrong manifest schema",
+    )
+    check(
+        len(manifest["observations"]) == expected["observation_count"],
+        "wrong observation count",
+    )
+    check(
+        all(
+            item["schema_version"] == expected["observation_schema"]
+            for item in manifest["observations"]
+        ),
+        "wrong observation schema",
+    )
+
+    polymarket_groups = {
+        item["independence_group"]
+        for item in manifest["observations"]
+        if item["source_id"] in {
+            "Crucix/Polymarket",
+            "Crucix/Adanos/polymarket",
+        }
+    }
+    check(
+        polymarket_groups == {"polymarket"},
+        "direct and Adanos Polymarket provenance diverged",
+    )
+    news_observation = next(
+        item
+        for item in manifest["observations"]
+        if item["source_id"] == "Supplement/NewsAggregator"
+    )
+    check(
+        news_observation["staleness_seconds"] == 300,
+        "source and fetch timestamps were not kept distinct",
+    )
+
+    artifact = pipeline.build_scenario_synthesis(
+        manifest,
+        fixture["hypotheses"],
+        generated_at=fixture["fetched_at"],
+    )
+    markdown = pipeline.render_scenario_markdown(artifact, manifest)
+    check(
+        artifact["schema_version"] == expected["scenario_schema"],
+        "wrong scenario schema",
+    )
+    check(
+        len(artifact["hypotheses"]) == expected["hypothesis_count"],
+        "wrong hypothesis count",
+    )
+    for section in expected["required_sections"]:
+        check(f"## {section}" in markdown, f"render missing section {section}")
+    check(
+        pipeline.legacy_consumer_diff() == expected["legacy_consumer_diff"],
+        "legacy consumer diff changed",
+    )
+
+    manifest_path = temp_dir / "prediction_fixture.manifest.json"
+    pipeline._atomic_write_json(
+        manifest_path,
+        manifest,
+        pipeline.validate_observation_manifest,
+    )
+    check(
+        json.loads(manifest_path.read_text(encoding="utf-8")) == manifest,
+        "atomic manifest changed payload",
+    )
+
+    duplicate = deepcopy(manifest)
+    duplicate["observations"].append(deepcopy(duplicate["observations"][0]))
+    expect_rejected(
+        lambda: pipeline.validate_observation_manifest(duplicate),
+        "duplicate",
+    )
+
+    invalid_status = deepcopy(manifest)
+    invalid_status["observations"][0]["status"] = "maybe"
+    expect_rejected(
+        lambda: pipeline.validate_observation_manifest(invalid_status),
+        "invalid status",
+    )
+
+    invalid_timestamp = deepcopy(manifest)
+    invalid_timestamp["observations"][0]["fetched_at"] = "yesterday"
+    expect_rejected(
+        lambda: pipeline.validate_observation_manifest(invalid_timestamp),
+        "invalid isoformat",
+    )
+
+    market_without_provenance = deepcopy(manifest)
+    market_item = next(
+        item
+        for item in market_without_provenance["observations"]
+        if item["market_derived"]
+    )
+    market_item["independence_group"] = ""
+    expect_rejected(
+        lambda: pipeline.validate_observation_manifest(
+            market_without_provenance
+        ),
+        "independence_group",
+    )
+
+    dangling = deepcopy(artifact)
+    dangling["hypotheses"][0]["supporting_observation_ids"].append("obs-missing")
+    expect_rejected(
+        lambda: pipeline.validate_scenario_synthesis(dangling, manifest),
+        "dangling evidence",
+    )
+
+    market_as_support = deepcopy(artifact)
+    market_as_support["hypotheses"][0]["supporting_observation_ids"].append(
+        next(
+            item["observation_id"]
+            for item in manifest["observations"]
+            if item["market_derived"]
+        )
+    )
+    expect_rejected(
+        lambda: pipeline.validate_scenario_synthesis(
+            market_as_support,
+            manifest,
+        ),
+        "market observations must use market evidence",
+    )
+
+    invented_probability = deepcopy(artifact)
+    invented_probability["hypotheses"][0]["probability"] = 0.75
+    expect_rejected(
+        lambda: pipeline.validate_scenario_synthesis(
+            invented_probability,
+            manifest,
+        ),
+        "hypothesis fields differ",
+    )
+    return manifest, artifact, markdown
+
+
+def artifact_endpoint_fixture(temp_dir, manifest, artifact):
+    original_output = api.OUTPUT_DIR
+    api.OUTPUT_DIR = temp_dir
+    today = datetime.now(ZoneInfo("America/New_York")).strftime("%Y%m%d")
+    report_id = f"prediction_{today}_120000"
+    report_path = temp_dir / f"{report_id}.md"
+    report_path.write_text(
+        "# Fixture\n" + ("structured evidence\n" * 80),
+        encoding="utf-8",
+    )
+    manifest = deepcopy(manifest)
+    artifact = deepcopy(artifact)
+    manifest["report_id"] = report_id
+    artifact["report_id"] = report_id
+    pipeline._atomic_write_json(
+        temp_dir / f"{report_id}.manifest.json",
+        manifest,
+        pipeline.validate_observation_manifest,
+    )
+    pipeline._atomic_write_json(
+        temp_dir / f"{report_id}.json",
+        artifact,
+        lambda value: pipeline.validate_scenario_synthesis(value, manifest),
+    )
+    try:
+        check(
+            api.output_today_manifest()["report_id"] == report_id,
+            "manifest endpoint returned wrong artifact",
+        )
+        check(
+            api.output_today_structured()["report_id"] == report_id,
+            "structured endpoint returned wrong artifact",
+        )
+    finally:
+        api.OUTPUT_DIR = original_output
+
+
+def emit_cp0_bundle(manifest, artifact, markdown):
+    output_dir = Path("/tmp/mirofish-p1-m3-cp0")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_id = artifact["report_id"]
+    pipeline._atomic_write_text(output_dir / f"{report_id}.md", markdown)
+    pipeline._atomic_write_json(
+        output_dir / f"{report_id}.json",
+        artifact,
+        lambda value: pipeline.validate_scenario_synthesis(value, manifest),
+    )
+    pipeline._atomic_write_json(
+        output_dir / f"{report_id}.manifest.json",
+        manifest,
+        pipeline.validate_observation_manifest,
+    )
+    summary = {
+        "schema_version": manifest["schema_version"],
+        "report_id": manifest["report_id"],
+        "observation_count": len(manifest["observations"]),
+        "status_counts": {
+            status: sum(
+                item["status"] == status
+                for item in manifest["observations"]
+            )
+            for status in sorted(pipeline.OBSERVATION_STATUSES)
+        },
+        "market_independence_groups": sorted({
+            item["independence_group"]
+            for item in manifest["observations"]
+            if item["market_derived"]
+        }),
+    }
+    pipeline._atomic_write_json(
+        output_dir / "manifest-summary.json",
+        summary,
+    )
+    pipeline._atomic_write_json(
+        output_dir / "legacy-consumer-diff.json",
+        pipeline.legacy_consumer_diff(),
+    )
+    return output_dir
+
+
 def main():
-    with tempfile.TemporaryDirectory(prefix="mirofish-p1-m2-") as directory:
+    with tempfile.TemporaryDirectory(prefix="mirofish-p1-") as directory:
         temp_dir = Path(directory)
         report_validation_fixtures(temp_dir)
         atomic_write_fixtures(temp_dir)
         checkpoint_and_run_or_skip_fixtures(temp_dir)
+        manifest, artifact, markdown = scenario_contract_fixtures(temp_dir)
+        artifact_endpoint_fixture(temp_dir, manifest, artifact)
     source_total_fixture()
     compose_fixture()
+    cp0_dir = emit_cp0_bundle(manifest, artifact, markdown)
     print(
         "PASS: zero-byte, undersized, invalid UTF-8, partial, valid, atomic-write, "
-        "stale-checkpoint, current-checkpoint, and idempotent-skip fixtures"
+        "stale/current checkpoint, idempotent skip, observation provenance, "
+        "scenario synthesis, schema rejection, and artifact endpoint fixtures"
     )
+    print(f"CP0 bundle: {cp0_dir}")
 
 
 if __name__ == "__main__":
