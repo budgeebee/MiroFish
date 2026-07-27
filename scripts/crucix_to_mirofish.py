@@ -3068,7 +3068,7 @@ def main():
     refresh_adanos()
 
     with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        crucix_data = json.load(f)
 
     supplements = {}
 
@@ -3101,23 +3101,23 @@ def main():
             "as_of": as_of,
         }
 
-    sweep_ts = data.get("crucix", {}).get("timestamp", "unknown")
-    sources_ok = data.get("crucix", {}).get("sourcesOk", 0)
-    source_health = data.get("sourceHealth", {})
+    sweep_ts = crucix_data.get("crucix", {}).get("timestamp", "unknown")
+    sources_ok = crucix_data.get("crucix", {}).get("sourcesOk", 0)
+    source_health = crucix_data.get("sourceHealth", {})
     sources_total = (
         len(source_health)
-        or data.get("crucix", {}).get("sourcesQueried")
+        or crucix_data.get("crucix", {}).get("sourcesQueried")
         or (
             sources_ok
-            + data.get("crucix", {}).get("sourcesFailed", 0)
+            + crucix_data.get("crucix", {}).get("sourcesFailed", 0)
         )
-        or len(data.get("sources", {}))
+        or len(crucix_data.get("sources", {}))
     )
     print(f"  Sweep time: {sweep_ts}")
     print(f"  Sources OK: {sources_ok}/{sources_total}")
 
     # Convert to markdown
-    md = crucix_to_markdown(data)
+    md = crucix_to_markdown(crucix_data)
     print(f"  Crucix brief: {len(md)} characters")
 
     # Fetch and append news-aggregator headlines
@@ -3166,12 +3166,16 @@ def main():
         print(f"  Held symbols: {', '.join(held_symbols)}")
         sentiments = {}
         sym_results = _parallel_fetch(held_symbols[:5], fetch_social_sentiment, max_workers=5)
-        for sym, data in sym_results.items():
-            if data and not data.get("error"):
-                sentiments[sym] = data
-                print(f"  ✓ {sym}: {data.get('overall', '?')}")
+        for sym, sentiment_data in sym_results.items():
+            if sentiment_data and not sentiment_data.get("error"):
+                sentiments[sym] = sentiment_data
+                print(f"  ✓ {sym}: {sentiment_data.get('overall', '?')}")
             else:
-                err = data.get('error', 'no data') if data else 'failed'
+                err = (
+                    sentiment_data.get('error', 'no data')
+                    if sentiment_data
+                    else 'failed'
+                )
                 print(f"  ✗ {sym}: {err}")
         sentiment_md = sentiment_to_markdown(sentiments)
         record_supplement(
@@ -3514,7 +3518,7 @@ def main():
     except ValueError:
         manifest_fetched_at = _now().isoformat()
     manifest = build_observation_manifest(
-        data,
+        crucix_data,
         supplements,
         report_id=f"pending-{_now():%Y%m%d}",
         fetched_at=manifest_fetched_at,

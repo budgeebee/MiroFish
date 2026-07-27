@@ -174,6 +174,19 @@ def source_total_fixture():
     check("2/3 sources reporting" in markdown, "source total was not derived from input")
 
 
+def main_manifest_input_fixture():
+    source = (ROOT / "scripts/crucix_to_mirofish.py").read_text(encoding="utf-8")
+    check(
+        "manifest = build_observation_manifest(\n        crucix_data,"
+        in source,
+        "main no longer passes the loaded Crucix document to the manifest",
+    )
+    check(
+        "for sym, data in sym_results.items()" not in source,
+        "sentiment loop can overwrite the loaded Crucix document",
+    )
+
+
 def compose_fixture():
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     for required in [
@@ -607,6 +620,7 @@ def main():
         manifest, artifact, markdown = scenario_contract_fixtures(temp_dir)
         artifact_endpoint_fixture(temp_dir, manifest, artifact)
     source_total_fixture()
+    main_manifest_input_fixture()
     compose_fixture()
     host_default_fixture()
     cp0_dir = emit_cp0_bundle(manifest, artifact, markdown)
