@@ -71,6 +71,7 @@ services:
       - KALSHI_JOURNAL=/journals/kalshi/kalshi-trading-journal.json
       - INSIDER_CAPITOL_URL=http://host.docker.internal:9700
       - NEWS_AGGREGATOR_URL=http://news-aggregator:8000
+      - LLAMA_SWAP_URL=http://host.docker.internal:8090
       - GRAPHITI_URL=http://graphiti_api:8000
     ports:
       - "5010:5010"

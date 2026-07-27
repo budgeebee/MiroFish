@@ -625,6 +625,200 @@ def extract_scenario_synthesis(
     return artifact
 
 
+def _parse_json_object(text):
+    if isinstance(text, dict):
+        return text
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("scenario repair returned no content")
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("scenario repair returned no JSON object")
+    try:
+        value, _ = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError as error:
+        raise ValueError(f"scenario repair JSON is invalid: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError("scenario repair did not return an object")
+    return value
+
+
+def _scenario_repair_prompt(report_text, brief_text, manifest, feedback=""):
+    allowed = [
+        {
+            "observation_id": item["observation_id"],
+            "source_id": item["source_id"],
+            "source_type": item["source_type"],
+            "market_derived": item["market_derived"],
+            "status": item["status"],
+            "independence_group": item["independence_group"],
+        }
+        for item in manifest["observations"]
+    ]
+    retry_note = (
+        f"\nThe previous candidate failed local validation: {feedback}\n"
+        if feedback
+        else ""
+    )
+    if len(brief_text) > 8000:
+        brief_text = (
+            brief_text[:5000]
+            + "\n\n[...middle of brief omitted...]\n\n"
+            + brief_text[-3000:]
+        )
+    if len(report_text) > 6000:
+        report_text = report_text[:6000] + "\n\n[...report truncated...]\n"
+    return f"""\
+Convert the supplied evidence brief and preserved social-simulation report into
+one concise `scenario-synthesis.v1` JSON object. Output JSON only.
+
+Use at most three hypotheses. Preserve useful conditional tradeable implications,
+but do not issue trade recommendations or invent outcome probabilities.
+Confidence is only low, medium, or high and describes evidence quality.
+
+Every hypothesis must contain exactly:
+`hypothesis_id`, `claim`, `horizon` (an object with `start` and `end`, each ISO
+timestamp or null), `epistemic_status` (`observed`, `inferred`, or `unknown`),
+`confidence`, `supporting_observation_ids`, `contradicting_observation_ids`,
+`unknowns`, `falsifiers`, `watch_conditions`, `affected_entities`, and
+`market_observation_ids`.
+
+Use only the exact allowed observation IDs below. Market-derived IDs may appear
+only in `market_observation_ids`; never use market prices as independent
+confirmation. Non-market IDs may appear only in supporting or contradicting
+lists. If the evidence cannot support a claim, narrow the claim or record the
+gap as an unknown. Do not create descriptive replacement IDs.
+
+The publisher overwrites `schema_version`, `report_id`, and `generated_at`, but
+include those three top-level fields plus `hypotheses`.
+{retry_note}
+ALLOWED OBSERVATIONS:
+{json.dumps(allowed, ensure_ascii=False)}
+
+ORIGINAL EVIDENCE BRIEF:
+{brief_text}
+
+PRESERVED SIMULATION REPORT:
+{report_text}
+"""
+
+
+def _request_scenario_repair(prompt):
+    backends = [
+        (
+            "local",
+            LLAMA_SWAP_URL,
+            None,
+            os.getenv("SCENARIO_REPAIR_MODEL", "writer-qwen3.6-27b"),
+        ),
+    ]
+    if os.getenv("SCENARIO_REPAIR_ALLOW_REMOTE", "").lower() == "true":
+        backends.extend([
+            (
+                "boost",
+                LLM_BOOST_BASE_URL,
+                os.getenv("LLM_BOOST_API_KEY"),
+                os.getenv("LLM_BOOST_MODEL_NAME", "kimi-k2.6"),
+            ),
+            (
+                "primary",
+                LLM_BASE_URL,
+                os.getenv("LLM_API_KEY"),
+                os.getenv("LLM_MODEL_NAME", "MiniMax-M3"),
+            ),
+        ])
+    errors = []
+    for label, base_url, key, model in backends:
+        if label != "local" and not key:
+            continue
+        try:
+            headers = {"Content-Type": "application/json"}
+            if key:
+                headers["Authorization"] = f"Bearer {key}"
+            endpoint = (
+                f"{base_url.rstrip('/')}/v1/chat/completions"
+                if label == "local"
+                else f"{base_url.rstrip('/')}/chat/completions"
+            )
+            response = _session.post(
+                endpoint,
+                headers=headers,
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You produce compact evidence-linked JSON for "
+                                "local schema validation."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 1 if "kimi" in model.lower() else 0.1,
+                    "max_tokens": 3000,
+                },
+                timeout=300,
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            print(f"  Scenario repair response received from {label} ({model})")
+            return content
+        except requests.HTTPError as error:
+            status = error.response.status_code if error.response is not None else "?"
+            detail = (
+                error.response.text[:240]
+                if error.response is not None
+                else type(error).__name__
+            )
+            errors.append(f"{label}: HTTP {status} {detail}")
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            requests.RequestException,
+        ) as error:
+            errors.append(f"{label}: {type(error).__name__}")
+    if not errors:
+        raise ValueError("scenario repair has no configured backend")
+    raise ValueError("scenario repair backends failed: " + ", ".join(errors))
+
+
+def repair_scenario_synthesis(
+    report_text,
+    brief_text,
+    manifest,
+    *,
+    report_id,
+    generated_at,
+    completion_fn=None,
+):
+    """Constrain a failed report block to exact local evidence and schema."""
+    validate_observation_manifest(manifest)
+    completion_fn = completion_fn or _request_scenario_repair
+    feedback = ""
+    last_error = None
+    for _ in range(2):
+        prompt = _scenario_repair_prompt(
+            report_text,
+            brief_text,
+            manifest,
+            feedback=feedback,
+        )
+        try:
+            artifact = _parse_json_object(completion_fn(prompt))
+            artifact["schema_version"] = "scenario-synthesis.v1"
+            artifact["report_id"] = report_id
+            artifact["generated_at"] = _iso_or_none(generated_at)
+            validate_scenario_synthesis(artifact, manifest)
+            return artifact
+        except (KeyError, TypeError, ValueError) as error:
+            last_error = error
+            feedback = str(error)
+    raise ValueError(
+        f"scenario repair failed local validation: {last_error}"
+    ) from last_error
+
+
 def render_scenario_markdown(artifact, manifest) -> str:
     validate_scenario_synthesis(artifact, manifest)
     hypotheses = artifact["hypotheses"]
@@ -2625,12 +2819,25 @@ def run_pipeline(
         manifest["report_id"] = artifact_report_id
         manifest["generated_at"] = artifact_time
         validate_observation_manifest(manifest)
-        structured = extract_scenario_synthesis(
-            md_content,
-            manifest,
-            report_id=artifact_report_id,
-            generated_at=artifact_time,
-        )
+        try:
+            structured = extract_scenario_synthesis(
+                md_content,
+                manifest,
+                report_id=artifact_report_id,
+                generated_at=artifact_time,
+            )
+        except ValueError as extraction_error:
+            print(
+                "  Embedded scenario block rejected; attempting constrained "
+                f"repair ({extraction_error})"
+            )
+            structured = repair_scenario_synthesis(
+                md_content,
+                Path(md_path).read_text(encoding="utf-8"),
+                manifest,
+                report_id=artifact_report_id,
+                generated_at=artifact_time,
+            )
         canonical_markdown = append_preserved_simulation(
             render_scenario_markdown(structured, manifest),
             md_content,

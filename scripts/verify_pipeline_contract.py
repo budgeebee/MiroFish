@@ -179,6 +179,7 @@ def compose_fixture():
     for required in [
         "CRUCIX_URL=http://host.docker.internal:3117",
         "SCHWALPACA_URL=http://host.docker.internal:8855",
+        "LLAMA_SWAP_URL=http://host.docker.internal:8090",
         "/crucix/runs:ro",
         "/journals/schwalpaca:ro",
         "/journals/kalshi:ro",
@@ -341,6 +342,32 @@ def scenario_contract_fixtures(temp_dir):
         generated_at=fixture["fetched_at"],
     )
     check(extracted == artifact, "live scenario extraction changed the artifact")
+
+    repair_calls = []
+    invalid_artifact = deepcopy(artifact)
+    invalid_artifact["hypotheses"][0]["supporting_observation_ids"] = [
+        "invented-observation-id"
+    ]
+
+    def repair_completion(prompt):
+        repair_calls.append(prompt)
+        value = invalid_artifact if len(repair_calls) == 1 else artifact
+        return "```json\n" + json.dumps(value, ensure_ascii=False) + "\n```"
+
+    repaired = pipeline.repair_scenario_synthesis(
+        embedded_report,
+        "# Original evidence brief",
+        manifest,
+        report_id=fixture["report_id"],
+        generated_at=fixture["fetched_at"],
+        completion_fn=repair_completion,
+    )
+    check(repaired == artifact, "constrained scenario repair changed the artifact")
+    check(len(repair_calls) == 2, "invalid repaired evidence was not retried")
+    check(
+        "invented-observation-id" in repair_calls[1],
+        "repair retry omitted local validation feedback",
+    )
     markdown = pipeline.render_scenario_markdown(artifact, manifest)
     check(
         artifact["report_id"] == manifest["report_id"]
