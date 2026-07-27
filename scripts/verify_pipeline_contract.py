@@ -381,6 +381,26 @@ def scenario_contract_fixtures(temp_dir):
         "invented-observation-id" in repair_calls[1],
         "repair retry omitted local validation feedback",
     )
+    market_id = next(
+        item["observation_id"]
+        for item in manifest["observations"]
+        if item["market_derived"]
+    )
+    market_misplaced = deepcopy(artifact)
+    market_misplaced["hypotheses"][0]["supporting_observation_ids"] = [market_id]
+    relocated = pipeline.repair_scenario_synthesis(
+        embedded_report,
+        "# Original evidence brief",
+        manifest,
+        report_id=fixture["report_id"],
+        generated_at=fixture["fetched_at"],
+        completion_fn=lambda prompt: json.dumps(market_misplaced),
+    )
+    check(
+        market_id in relocated["hypotheses"][0]["market_observation_ids"]
+        and market_id not in relocated["hypotheses"][0]["supporting_observation_ids"],
+        "market evidence was not relocated to market_observation_ids",
+    )
     markdown = pipeline.render_scenario_markdown(artifact, manifest)
     check(
         artifact["report_id"] == manifest["report_id"]

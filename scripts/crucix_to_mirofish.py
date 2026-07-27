@@ -809,6 +809,31 @@ def repair_scenario_synthesis(
             artifact["schema_version"] = "scenario-synthesis.v1"
             artifact["report_id"] = report_id
             artifact["generated_at"] = _iso_or_none(generated_at)
+            market_ids = {
+                item["observation_id"]
+                for item in manifest["observations"]
+                if item["market_derived"]
+            }
+            for hypothesis in artifact.get("hypotheses", []):
+                misplaced_market_ids = (
+                    set(hypothesis.get("supporting_observation_ids", []))
+                    | set(hypothesis.get("contradicting_observation_ids", []))
+                ) & market_ids
+                if misplaced_market_ids:
+                    hypothesis["supporting_observation_ids"] = [
+                        item
+                        for item in hypothesis.get("supporting_observation_ids", [])
+                        if item not in market_ids
+                    ]
+                    hypothesis["contradicting_observation_ids"] = [
+                        item
+                        for item in hypothesis.get("contradicting_observation_ids", [])
+                        if item not in market_ids
+                    ]
+                    hypothesis["market_observation_ids"] = list(dict.fromkeys(
+                        hypothesis.get("market_observation_ids", [])
+                        + sorted(misplaced_market_ids)
+                    ))
             validate_scenario_synthesis(artifact, manifest)
             return artifact
         except (KeyError, TypeError, ValueError) as error:
