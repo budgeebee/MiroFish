@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule the daily MiroFish intelligence pipeline
+
+[Timer]
+OnCalendar=*-*-* 21:05:00 America/Tijuana
+Persistent=true
+Unit=mirofish-daily.service
+
+[Install]
+WantedBy=timers.target
+

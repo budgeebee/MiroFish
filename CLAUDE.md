@@ -1,5 +1,36 @@
 # MiroFish — Local Configuration
 
+## Current Handoff — 2026-07-27
+
+Phase 1 is closed. P1-M5 is committed after the first corrected live report.
+
+- Live report: `prediction_20260727_135603`
+- Artifacts: Markdown, `scenario-synthesis.v1`, and `observation-manifest.v1`
+  all share that report ID.
+- Strict freshness verifier: passed; 59 observations, 45 Crucix-derived and 8
+  market-derived; no active process or current checkpoint.
+- `mirofish-daily.timer`: enabled and active for 21:05 `America/Tijuana`.
+- User lingering: enabled.
+- Hermes baseline: all 8 jobs remain enabled.
+- Crucix is live on committed `453b3fa` with 43 registry/sourceHealth entries.
+- MiroFish hotfixes `3b2cfc7`, `5d1dd98`, and `8d0e187` remain separate and
+  preserve raw simulation, local schema repair, exact provenance, and market
+  evidence separation.
+- Failed intermediate artifacts remain recoverable under
+  `output/recovery/`; do not delete them during later cleanup.
+
+Closeout checks used:
+
+```bash
+python3 scripts/verify_daily_freshness.py --live
+systemctl --user status mirofish-daily.timer
+systemctl --user list-timers --all
+python3 scripts/verify_pipeline_contract.py
+```
+
+These checks passed. The next planner session should create the Phase 2 plan;
+do not begin Phase 2 implementation from this entry-point document alone.
+
 ## What This Is
 MiroFish is a multi-agent social simulation engine. On Strixy it is the
 **evidence and scenario-synthesis layer** for the private Schwalpaca and Kalshi
@@ -50,6 +81,9 @@ not verified facts, outcome probabilities, or trade recommendations. An English
 
 ## Key Files
 - `scripts/crucix_to_mirofish.py` — Main pipeline script (Crucix + news-aggregator → MiroFish)
+- `scripts/verify_daily_freshness.py` — Read-only daily report, source, schema, and pipeline verifier
+- `ops/systemd/mirofish-daily.{service,timer}` — Private Strixy user timer; 21:05 America/Tijuana
+- `ops/install-user-unit.sh` — Dry-run-by-default installer for only the two MiroFish user units
 - `backend/app/utils/llm_client.py` — Modified with JSON repair + Kimi temp override
 - `docker-compose.yml` — Local ARM64 build, ports 3003/5005
 - `frontend/vite.config.js` — Tailscale hostname allowed

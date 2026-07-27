@@ -1,0 +1,16 @@
+[Unit]
+Description=Run or safely skip the daily MiroFish intelligence pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/irvins/Projects/MiroFish/.env
+RuntimeDirectory=mirofish-daily
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ExecStart=/usr/bin/curl --fail-with-body --silent --show-error --connect-timeout 5 --max-time 30 --request POST --output %t/mirofish-daily/response.json http://127.0.0.1:5010/run-or-skip
+ExecStartPost=/usr/bin/python3 -c "import json,pathlib,sys; data=json.loads(pathlib.Path('%t/mirofish-daily/response.json').read_text()); valid=isinstance(data,dict) and (data.get('skipped') is True or data.get('launched') is True); print(json.dumps(data,sort_keys=True)); sys.exit(0 if valid else 1)"
+
