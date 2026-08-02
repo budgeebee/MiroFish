@@ -38,6 +38,81 @@ def parse_report_id(report_path):
     return match.group(1)
 
 
+def verify_market_direction_contract(manifest, structured):
+    observations = manifest.get("observations")
+    hypotheses = structured.get("hypotheses")
+    require(isinstance(observations, list), "manifest observations must be a list")
+    require(isinstance(hypotheses, list), "structured hypotheses must be a list")
+    source_by_id = {}
+    for observation in observations:
+        require(isinstance(observation, dict), "manifest observation is invalid")
+        observation_id = observation.get("observation_id")
+        source_id = observation.get("source_id")
+        require(
+            isinstance(observation_id, str) and observation_id,
+            "manifest observation ID is invalid",
+        )
+        require(observation_id not in source_by_id, "duplicate manifest observation ID")
+        source_by_id[observation_id] = source_id
+    granular_ids = {
+        observation_id
+        for observation_id, source_id in source_by_id.items()
+        if isinstance(source_id, str)
+        and source_id.startswith("Crucix/Polymarket/")
+    }
+    require(granular_ids, "no granular Polymarket observations")
+
+    directional_pairs = 0
+    directional_abstentions = 0
+    for hypothesis in hypotheses:
+        require(isinstance(hypothesis, dict), "structured hypothesis is invalid")
+        hypothesis_id = hypothesis.get("hypothesis_id")
+        market_ids = hypothesis.get("market_observation_ids")
+        directions = hypothesis.get("market_directions")
+        require(
+            isinstance(market_ids, list),
+            f"{hypothesis_id}: market_observation_ids must be a list",
+        )
+        require(
+            isinstance(directions, list),
+            f"{hypothesis_id}: market_directions must be a list",
+        )
+        directional_ids = [item for item in market_ids if item in granular_ids]
+        require(
+            len(directional_ids) == len(set(directional_ids)),
+            f"{hypothesis_id}: duplicate exact Polymarket evidence",
+        )
+        paired_ids = []
+        for entry in directions:
+            require(
+                isinstance(entry, dict)
+                and set(entry) == {"observation_id", "direction"},
+                f"{hypothesis_id}: invalid market direction fields",
+            )
+            direction = entry["direction"]
+            require(
+                type(direction) is int and direction in {-1, 0, 1},
+                f"{hypothesis_id}: invalid market direction value",
+            )
+            require(
+                entry["observation_id"] in granular_ids,
+                f"{hypothesis_id}: direction targets non-granular observation",
+            )
+            paired_ids.append(entry["observation_id"])
+            directional_abstentions += direction == 0
+        require(
+            paired_ids == directional_ids,
+            f"{hypothesis_id}: direction pairs do not match ordered Polymarket evidence",
+        )
+        directional_pairs += len(directions)
+    require(directional_pairs > 0, "no hypothesis/contract direction pairs")
+    return {
+        "granular_polymarket_observations": len(granular_ids),
+        "directional_pairs": directional_pairs,
+        "directional_abstentions": directional_abstentions,
+    }
+
+
 def verify_snapshot(*, health, status, summary, manifest, structured, source_path, now):
     expected_date = now.astimezone(ET).strftime("%Y%m%d")
     require(health.get("status") == "ok", "MiroFish health is degraded")
@@ -76,6 +151,7 @@ def verify_snapshot(*, health, status, summary, manifest, structured, source_pat
         manifest.get("report_id") == structured.get("report_id") == report_id,
         "Markdown, manifest, and structured report IDs differ",
     )
+    direction_counts = verify_market_direction_contract(manifest, structured)
 
     source_path = Path(source_path)
     require(source_path.is_file(), f"Crucix source is missing: {source_path}")
@@ -96,6 +172,7 @@ def verify_snapshot(*, health, status, summary, manifest, structured, source_pat
         "source_age_seconds": int(source_age.total_seconds()),
         "pipeline_running": False,
         "checkpoint_current": False,
+        **direction_counts,
     }
 
 
@@ -156,10 +233,43 @@ def verify_fixture():
         manifest = {
             "schema_version": "observation-manifest.v1",
             "report_id": report_id,
+            "observations": [
+                {
+                    "observation_id": "obs-fixture-contract",
+                    "source_id": "Crucix/Polymarket/fixture-contract",
+                },
+                {
+                    "observation_id": "obs-fixture-shift-contract",
+                    "source_id": "Crucix/Polymarket/fixture-shift-contract",
+                },
+                {
+                    "observation_id": "obs-polymarket-aggregate",
+                    "source_id": "Crucix/Polymarket",
+                },
+            ],
         }
         structured = {
             "schema_version": "scenario-synthesis.v1",
             "report_id": report_id,
+            "hypotheses": [
+                {
+                    "hypothesis_id": "fixture-directional",
+                    "market_observation_ids": [
+                        "obs-fixture-contract",
+                        "obs-fixture-shift-contract",
+                    ],
+                    "market_directions": [
+                        {
+                            "observation_id": "obs-fixture-contract",
+                            "direction": 1,
+                        },
+                        {
+                            "observation_id": "obs-fixture-shift-contract",
+                            "direction": 0,
+                        },
+                    ],
+                }
+            ],
         }
         result = verify_snapshot(
             health=health,
@@ -171,6 +281,12 @@ def verify_fixture():
             now=now,
         )
         require(result["report_id"] == report_id, "valid fixture changed report ID")
+        require(
+            result["granular_polymarket_observations"] == 2
+            and result["directional_pairs"] == 2
+            and result["directional_abstentions"] == 1,
+            "valid fixture returned incorrect direction counts",
+        )
 
         mismatched = dict(structured, report_id="prediction_20260727_999999")
         try:
@@ -187,7 +303,15 @@ def verify_fixture():
             require("report IDs differ" in str(error), "wrong mismatch rejection")
         else:
             raise VerificationError("mismatched report IDs were accepted")
-    return {"status": "ok", "fixture": True, "report_id": report_id}
+        incomplete = json.loads(json.dumps(structured))
+        incomplete["hypotheses"][0]["market_directions"].pop()
+        try:
+            verify_market_direction_contract(manifest, incomplete)
+        except VerificationError as error:
+            require("ordered Polymarket evidence" in str(error), "wrong pairing rejection")
+        else:
+            raise VerificationError("incomplete market direction pairing was accepted")
+    return {**result, "fixture": True}
 
 
 def main():
@@ -220,4 +344,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

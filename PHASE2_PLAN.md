@@ -10,7 +10,7 @@
 
 **Incoming request:** `REQUEST-trading-intelligence-phase6.md`
 
-**Next milestone:** P2-M1 only
+**Next milestone:** P2-M3 only
 
 This is the MiroFish Phase 2 plan. The incoming document is a request from
 trading-intelligence Phase 6; it is not itself an implementation contract.
@@ -829,7 +829,7 @@ Record the divergence in Amendments and halt. Do not mark the phase complete.
 ## Milestone status
 
 - [x] P2-M1 — Exact Polymarket observation identity
-- [ ] P2-M2 — Signed hypothesis/contract direction
+- [x] P2-M2 — Signed hypothesis/contract direction
 - [ ] P2-M3 — Scheduled live canary and closeout
 
 ## Verify log
@@ -937,9 +937,70 @@ No live pipeline, service, timer, API, permission, historical output, or other
 repository was changed. P2-M2 was not started.
 ```
 
-### P2-M2 — pending
+### P2-M2 — 2026-08-02 — PASS
 
-Executor appends real output here.
+```text
+Commit target:
+  P2-M2 add signed Polymarket direction pairs
+
+Implementation:
+  - Added required market_directions lists without changing the
+    scenario-synthesis.v1 envelope or endpoint contract.
+  - Normalized only explicit fixture/draft source IDs to observation IDs; no
+    claim-text inference, default, copy, or sign synthesis was introduced.
+  - Enforced exact ordered pairing for granular direct-Polymarket citations,
+    strict integer {-1,0,1} values with booleans rejected, and no direction for
+    aggregate or other market/non-market observations.
+  - Added exact YES-outcome semantics to generation and repair prompts, exposed
+    UP/DOWN/ABSTAIN in Markdown, and made freshness verification return exact
+    granular-observation, pair, and abstention counts.
+
+DISCRETION:
+  The static fixture uses explicit `source_id` direction records, which the
+  deterministic builder converts to content-addressed observation IDs. This
+  keeps fixture intent readable while validating the persisted exact shape.
+
+python3 scripts/verify_pipeline_contract.py
+  PASS: zero-byte, undersized, invalid UTF-8, partial, valid, atomic-write,
+  stale/current checkpoint, idempotent skip, observation provenance, granular
+  Polymarket identity/deduplication, aggregate-citation rejection, signed
+  market directions, abstention, invalid-type rejection, ordered pairing,
+  repair retry, scenario synthesis, schema rejection, and artifact endpoint
+  fixtures
+  CP0 bundle: /tmp/mirofish-p1-m3-cp0
+
+python3 scripts/verify_daily_freshness.py --fixture
+  {"checkpoint_current": false, "directional_abstentions": 1,
+  "directional_pairs": 2, "fixture": true,
+  "granular_polymarket_observations": 2, "pipeline_running": false,
+  "report_date": "20260727", "report_id": "prediction_20260727_000500",
+  "report_size_bytes": 4096, "source_age_seconds": 600, "status": "ok"}
+
+python3 -m py_compile scripts/crucix_to_mirofish.py
+  scripts/verify_pipeline_contract.py scripts/verify_daily_freshness.py api_server.py
+  exit 0, no output
+
+git diff --check
+  exit 0, no output
+
+Named CP0 structured/Markdown inspection:
+  schema=scenario-synthesis.v1
+  every hypothesis has market_directions=true
+  direction values=[1,-1,0]
+  Markdown labels=UP (+1), DOWN (-1), ABSTAIN (0)
+
+Files before closeout commit:
+  M PHASE2_PLAN.md
+  M TODO.md
+  M fixtures/scenario-expected-shape.json
+  M fixtures/scenario-input.json
+  M scripts/crucix_to_mirofish.py
+  M scripts/verify_daily_freshness.py
+  M scripts/verify_pipeline_contract.py
+
+No live pipeline, service, timer, API, permission, historical output, or other
+repository was changed. P2-M3 was not started.
+```
 
 ### P2-M3 — pending
 
@@ -968,6 +1029,16 @@ Executor appends real output here.
   regress that behavior while adding `market_directions`.
 - Current live payload produces 10 unique labeled child contracts plus one
   aggregate. P2-M2 must not run a live pipeline.
+
+### P2-M2 to P2-M3 executor — 2026-08-02
+
+- P2-M2 is verified and committed; begin only from its clean commit.
+- The v1 structured artifact now requires one ordered `market_directions` entry
+  for every exact direct-Polymarket citation and rejects all other targets.
+- The strict freshness verifier now requires at least one granular observation
+  and one complete hypothesis/contract pair and reports pair/abstention counts.
+- Wait for the first naturally scheduled 21:05 America/Tijuana report generated
+  after P2-M2. Do not trigger an extra run or change runtime infrastructure.
 
 ## Amendments
 

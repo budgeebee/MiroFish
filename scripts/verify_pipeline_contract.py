@@ -541,6 +541,15 @@ def scenario_contract_fixtures(temp_dir):
             and "market_observation_ids" in prompt,
             "scenario prompt lost exact Polymarket citation rules",
         )
+        check(
+            "market_directions" in prompt
+            and "YES outcome" in prompt
+            and "-1" in prompt
+            and "0" in prompt
+            and "1" in prompt
+            and "abstention" in prompt,
+            "scenario prompt lost signed direction or abstention semantics",
+        )
     embedded_report = (
         "# Backend intermediate\n\n"
         "Simulation narrative omitted from the canonical publication.\n\n"
@@ -574,6 +583,109 @@ def scenario_contract_fixtures(temp_dir):
         "aggregate Polymarket",
     )
 
+    exact_ids = [item["observation_id"] for item in granular_polymarket]
+    aggregate_id = next(
+        item["observation_id"]
+        for item in manifest["observations"]
+        if item["source_id"] == "Crucix/Polymarket"
+    )
+    adanos_market_id = next(
+        item["observation_id"]
+        for item in manifest["observations"]
+        if item["source_id"] == "Crucix/Adanos/polymarket"
+    )
+    non_market_id = next(
+        item["observation_id"]
+        for item in manifest["observations"]
+        if not item["market_derived"]
+    )
+
+    direction_values = sorted({
+        entry["direction"]
+        for hypothesis in artifact["hypotheses"]
+        for entry in hypothesis["market_directions"]
+    })
+    check(
+        direction_values == expected["direction_values"],
+        "static fixture did not cover -1, 0, and +1 directions",
+    )
+    check(
+        all("market_directions" in hypothesis for hypothesis in artifact["hypotheses"])
+        and artifact["hypotheses"][3]["market_directions"] == [],
+        "every hypothesis did not receive a market_directions list",
+    )
+
+    def reject_direction(mutator, message):
+        candidate = deepcopy(artifact)
+        mutator(candidate)
+        expect_rejected(
+            lambda: pipeline.validate_scenario_synthesis(candidate, manifest),
+            message,
+        )
+
+    reject_direction(
+        lambda value: value["hypotheses"][0].update(market_directions=[]),
+        "exactly match ordered",
+    )
+    reject_direction(
+        lambda value: value["hypotheses"][3]["market_directions"].append({
+            "observation_id": exact_ids[0], "direction": 1,
+        }),
+        "exactly match ordered",
+    )
+
+    reordered = deepcopy(artifact)
+    reordered["hypotheses"][0]["market_observation_ids"] = exact_ids
+    reordered["hypotheses"][0]["market_directions"] = [
+        {"observation_id": exact_ids[1], "direction": 0},
+        {"observation_id": exact_ids[0], "direction": 1},
+    ]
+    expect_rejected(
+        lambda: pipeline.validate_scenario_synthesis(reordered, manifest),
+        "ordered",
+    )
+
+    duplicated = deepcopy(artifact)
+    duplicated["hypotheses"][0]["market_observation_ids"].append(exact_ids[0])
+    duplicated["hypotheses"][0]["market_directions"].append({
+        "observation_id": exact_ids[0], "direction": 1,
+    })
+    expect_rejected(
+        lambda: pipeline.validate_scenario_synthesis(duplicated, manifest),
+        "duplicate exact Polymarket",
+    )
+
+    for invalid_id in (
+        "obs-dangling-direction",
+        aggregate_id,
+        adanos_market_id,
+        non_market_id,
+    ):
+        reject_direction(
+            lambda value, invalid_id=invalid_id: value["hypotheses"][0]
+            ["market_directions"][0].update(observation_id=invalid_id),
+            "exactly match ordered",
+        )
+
+    invalid_fields = deepcopy(artifact)
+    invalid_fields["hypotheses"][0]["market_directions"][0]["confidence"] = "high"
+    expect_rejected(
+        lambda: pipeline.validate_scenario_synthesis(invalid_fields, manifest),
+        "direction fields",
+    )
+    not_a_list = deepcopy(artifact)
+    not_a_list["hypotheses"][0]["market_directions"] = None
+    expect_rejected(
+        lambda: pipeline.validate_scenario_synthesis(not_a_list, manifest),
+        "must be a list",
+    )
+    for invalid_direction in (-2, 2, "1", 1.0, None, True, False):
+        reject_direction(
+            lambda value, invalid_direction=invalid_direction: value["hypotheses"][0]
+            ["market_directions"][0].update(direction=invalid_direction),
+            "must be integer",
+        )
+
     repair_calls = []
     invalid_artifact = deepcopy(artifact)
     invalid_artifact["hypotheses"][0]["supporting_observation_ids"] = [
@@ -598,6 +710,29 @@ def scenario_contract_fixtures(temp_dir):
     check(
         "invented-observation-id" in repair_calls[1],
         "repair retry omitted local validation feedback",
+    )
+    pairing_calls = []
+    missing_pair = deepcopy(artifact)
+    missing_pair["hypotheses"][0]["market_directions"] = []
+
+    def pairing_completion(prompt):
+        pairing_calls.append(prompt)
+        value = missing_pair if len(pairing_calls) == 1 else artifact
+        return json.dumps(value, ensure_ascii=False)
+
+    pairing_repaired = pipeline.repair_scenario_synthesis(
+        embedded_report,
+        "# Original evidence brief",
+        manifest,
+        report_id=fixture["report_id"],
+        generated_at=fixture["fetched_at"],
+        completion_fn=pairing_completion,
+    )
+    check(pairing_repaired == artifact, "pairing repair changed valid directions")
+    check(len(pairing_calls) == 2, "missing direction pairing was not retried")
+    check(
+        "exactly match ordered" in pairing_calls[1],
+        "pairing repair retry omitted validation feedback",
     )
     market_id = next(
         item["observation_id"]
@@ -625,6 +760,8 @@ def scenario_contract_fixtures(temp_dir):
         and artifact["report_id"] in markdown,
         "Markdown, structured artifact, and manifest report IDs differ",
     )
+    for label in ("direction=UP (+1)", "direction=DOWN (-1)", "direction=ABSTAIN (0)"):
+        check(label in markdown, f"Markdown omitted {label}")
     preserved = pipeline.append_preserved_simulation(
         markdown,
         (
@@ -867,8 +1004,9 @@ def main():
         "PASS: zero-byte, undersized, invalid UTF-8, partial, valid, atomic-write, "
         "stale/current checkpoint, idempotent skip, observation provenance, "
         "granular Polymarket identity/deduplication, aggregate-citation "
-        "rejection, scenario synthesis, schema rejection, and artifact endpoint "
-        "fixtures"
+        "rejection, signed market directions, abstention, invalid-type "
+        "rejection, ordered pairing, repair retry, scenario synthesis, schema "
+        "rejection, and artifact endpoint fixtures"
     )
     print(f"CP0 bundle: {cp0_dir}")
 

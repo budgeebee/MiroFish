@@ -96,6 +96,7 @@ HYPOTHESIS_FIELDS = {
     "watch_conditions",
     "affected_entities",
     "market_observation_ids",
+    "market_directions",
 }
 
 
@@ -528,6 +529,21 @@ def build_scenario_synthesis(manifest, hypotheses, *, generated_at=None):
             explicit.append(by_source[source_id])
         return explicit
 
+    def resolve_market_directions(draft):
+        resolved = []
+        for entry in draft.get("market_directions", []):
+            if not isinstance(entry, dict):
+                resolved.append(entry)
+                continue
+            normalized = dict(entry)
+            if "source_id" in normalized:
+                source_id = normalized.pop("source_id")
+                if source_id not in by_source:
+                    raise ValueError(f"unknown direction source: {source_id}")
+                normalized["observation_id"] = by_source[source_id]
+            resolved.append(normalized)
+        return resolved
+
     rendered = []
     for draft in hypotheses:
         rendered.append({
@@ -555,6 +571,7 @@ def build_scenario_synthesis(manifest, hypotheses, *, generated_at=None):
                 "market_observation_ids",
                 "market_source_ids",
             ),
+            "market_directions": resolve_market_directions(draft),
         })
     artifact = {
         "schema_version": "scenario-synthesis.v1",
@@ -650,6 +667,39 @@ def validate_scenario_synthesis(artifact, manifest, market_ids=None):
             raise ValueError(
                 f"{hypothesis_id}: aggregate Polymarket observation is "
                 "provenance-only when exact contracts exist"
+            )
+        market_observation_ids = hypothesis.get("market_observation_ids", [])
+        directional_ids = [
+            observation_id
+            for observation_id in market_observation_ids
+            if observation_id in granular_polymarket_ids
+        ]
+        if len(directional_ids) != len(set(directional_ids)):
+            raise ValueError(
+                f"{hypothesis_id}: duplicate exact Polymarket market evidence"
+            )
+        market_directions = hypothesis.get("market_directions")
+        if not isinstance(market_directions, list):
+            raise ValueError(f"{hypothesis_id}: market_directions must be a list")
+        direction_ids = []
+        for entry in market_directions:
+            if not isinstance(entry, dict) or set(entry) != {
+                "observation_id",
+                "direction",
+            }:
+                raise ValueError(
+                    f"{hypothesis_id}: invalid market direction fields"
+                )
+            direction = entry["direction"]
+            if type(direction) is not int or direction not in {-1, 0, 1}:
+                raise ValueError(
+                    f"{hypothesis_id}: market direction must be integer -1, 0, or 1"
+                )
+            direction_ids.append(entry["observation_id"])
+        if direction_ids != directional_ids:
+            raise ValueError(
+                f"{hypothesis_id}: market directions must exactly match ordered "
+                "direct Polymarket evidence"
             )
         if not isinstance(hypothesis.get("claim"), str) or not hypothesis["claim"]:
             raise ValueError(f"{hypothesis_id}: missing claim")
@@ -797,7 +847,7 @@ Every hypothesis must contain exactly:
 timestamp or null), `epistemic_status` (`observed`, `inferred`, or `unknown`),
 `confidence`, `supporting_observation_ids`, `contradicting_observation_ids`,
 `unknowns`, `falsifiers`, `watch_conditions`, `affected_entities`, and
-`market_observation_ids`.
+`market_observation_ids`, and `market_directions`.
 
 Use only the exact allowed observation IDs below. Market-derived IDs may appear
 only in `market_observation_ids`; never use market prices as independent
@@ -810,6 +860,14 @@ For direct Polymarket claims, cite only exact
 observations exist, `Crucix/Polymarket` is aggregate provenance only and must
 not appear in `market_observation_ids`. Use the complete reference index below
 to map each exact observation ID to its market question and YES outcome.
+For every exact direct-Polymarket ID in `market_observation_ids`, in the same
+order, include exactly one `market_directions` object shaped as
+`{{"observation_id":"obs-...","direction":-1|0|1}}`. Direction refers to the
+contract's YES outcome: `1` means the claim makes YES more likely, `-1` means
+less likely, and `0` is a genuine directional abstention. Use `0` freely when a
+relevant cited contract has no supportable sign. Omit unrelated contracts from
+`market_observation_ids`; do not use `0` merely to include them. Never add a
+direction for aggregate Polymarket or any other market source.
 
 The publisher overwrites `schema_version`, `report_id`, and `generated_at`, but
 include those three top-level fields plus `hypotheses`.
@@ -1065,6 +1123,14 @@ def render_scenario_markdown(artifact, manifest) -> str:
         (
             item["hypothesis_id"],
             observations_by_id[observation_id],
+            next(
+                (
+                    direction["direction"]
+                    for direction in item["market_directions"]
+                    if direction["observation_id"] == observation_id
+                ),
+                None,
+            ),
         )
         for item in hypotheses
         for observation_id in item["market_observation_ids"]
@@ -1074,7 +1140,17 @@ def render_scenario_markdown(artifact, manifest) -> str:
             f"- **{hypothesis_id}:** `{observation['observation_id']}` from "
             f"{observation['source_id']} "
             f"(independence group: `{observation['independence_group']}`)"
-            for hypothesis_id, observation in market_values
+            + (
+                " | direction="
+                + {
+                    1: "UP (+1)",
+                    -1: "DOWN (-1)",
+                    0: "ABSTAIN (0)",
+                }[direction]
+                if direction is not None
+                else ""
+            )
+            for hypothesis_id, observation, direction in market_values
         ]
         or ["- No market observations recorded."]
     )
@@ -1276,7 +1352,7 @@ Each hypothesis must contain exactly:
 (`observed`, `inferred`, `unknown`), `confidence` (`low`, `medium`, `high`),
 `supporting_observation_ids`, `contradicting_observation_ids`, `unknowns`,
 `falsifiers`, `watch_conditions`, `affected_entities`, and
-`market_observation_ids`.
+`market_observation_ids`, and `market_directions`.
 
 Use only IDs from the Observation Reference Index. Put market IDs only in
 `market_observation_ids`. Use null horizon boundaries when the evidence does not
@@ -1284,7 +1360,16 @@ support a time boundary. The metadata values may be placeholders; the publisher
 sets them after validation. For direct Polymarket claims, cite only exact
 `Crucix/Polymarket/<venueContractId>` observations from the index. When those
 exact observations exist, `Crucix/Polymarket` is aggregate provenance only and
-must not appear in `market_observation_ids`.\
+must not appear in `market_observation_ids`.
+
+For every exact direct-Polymarket ID in `market_observation_ids`, emit exactly
+one `market_directions` object in the same order:
+`{"observation_id":"obs-...","direction":-1|0|1}`. Direction targets the
+contract's YES outcome: `1` means the hypothesis makes YES more likely, `-1`
+means less likely, and `0` is a genuine directional abstention. Use `0` freely
+when a relevant cited contract has no supportable sign. Omit unrelated
+contracts instead of assigning them `0`. Never emit a direction for aggregate
+Polymarket, Adanos, equities, options, screeners, or other market sources.\
 """
 
 # ---------------------------------------------------------------------------

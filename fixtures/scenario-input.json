@@ -193,7 +193,15 @@
       "affected_entities": [
         "fixture negotiators"
       ],
-      "market_source_ids": []
+      "market_source_ids": [
+        "Crucix/Polymarket/fixture-contract"
+      ],
+      "market_directions": [
+        {
+          "source_id": "Crucix/Polymarket/fixture-contract",
+          "direction": 1
+        }
+      ]
     },
     {
       "hypothesis_id": "inferred-narrative-persistence",
@@ -224,8 +232,14 @@
         "industrial firms"
       ],
       "market_source_ids": [
-        "Crucix/Polymarket/fixture-contract",
+        "Crucix/Polymarket/fixture-shift-contract",
         "Crucix/Adanos/polymarket"
+      ],
+      "market_directions": [
+        {
+          "source_id": "Crucix/Polymarket/fixture-shift-contract",
+          "direction": -1
+        }
       ]
     },
     {
@@ -251,7 +265,15 @@
       "affected_entities": [
         "fixture negotiators"
       ],
-      "market_observation_ids": []
+      "market_source_ids": [
+        "Crucix/Polymarket/fixture-contract"
+      ],
+      "market_directions": [
+        {
+          "source_id": "Crucix/Polymarket/fixture-contract",
+          "direction": 0
+        }
+      ]
     },
     {
       "hypothesis_id": "inferred-operational-resolution",
@@ -279,7 +301,8 @@
         "shipping operators",
         "industrial firms"
       ],
-      "market_observation_ids": []
+      "market_observation_ids": [],
+      "market_directions": []
     }
   ]
 }

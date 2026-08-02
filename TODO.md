@@ -11,13 +11,10 @@ Canonical plan: `PHASE2_PLAN.md`
 - [x] P2-M1 emitted exact per-contract Polymarket observations, retained the
       aggregate as provenance-only for hypothesis citations, and preserved the
       complete ID-to-question reference index.
+- [x] P2-M2 added complete ordered signed direction pairs for exact Polymarket
+      citations, including first-class abstention and strict freshness checks.
 
 ## Next
-
-- [ ] P2-M2 — add and validate signed `market_directions` per exact
-      hypothesis/contract pair.
-
-## Later
 
 - [ ] P2-M3 — verify the first naturally scheduled live report and close Phase
       2.

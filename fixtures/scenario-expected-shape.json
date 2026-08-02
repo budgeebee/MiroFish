@@ -4,6 +4,7 @@
   "observation_count": 10,
   "scenario_schema": "scenario-synthesis.v1",
   "hypothesis_count": 4,
+  "direction_values": [-1, 0, 1],
   "required_sections": [
     "What is observed",
     "What can be inferred",
