@@ -31,6 +31,32 @@ python3 scripts/verify_pipeline_contract.py
 These checks passed. The next planner session should create the Phase 2 plan;
 do not begin Phase 2 implementation from this entry-point document alone.
 
+## Open input for Phase 2 planning — 2026-08-02
+
+`REQUEST-trading-intelligence-phase6.md` (repo root) is an incoming
+request from the trading-intelligence Phase 6 experiment lane. Read it
+during Phase 2 planning; it is an input to that plan, not a patch to
+apply directly. Two asks:
+
+1. **Per-market Polymarket observations** — emit one observation per
+   market carrying `venueContractId`, instead of one per source. Today
+   `market_observation_ids` resolves to `Crucix/Polymarket` (the whole
+   feed), so a consumer cannot tell WHICH market a hypothesis is about.
+   Follows the existing `Crucix/Adanos/{section}` per-section pattern in
+   `crucix_to_mirofish.py`. Small.
+2. **A signed direction per (hypothesis, market) pair**, in `{-1,0,+1}`.
+   Larger — touches the scenario prompt, `HYPOTHESIS_FIELDS`, and
+   `validate_scenario_synthesis`. The requester's argument is that if
+   they infer direction from `claim` prose themselves, their experiment
+   measures their reading of MiroFish rather than MiroFish. Direction is
+   a property of the PAIR, not the claim: one real claim was clearly
+   DOWN against "Israel x Iran ceasefire continues through August 3?"
+   and indeterminate against "Iran leadership change by July 31?".
+
+Ask 1 is useful alone. Neither ask requires a permissions change —
+they read `/output/today/structured` and `/manifest` over the loopback
+API on 5010, the same path `schwalpaca-trading` already uses.
+
 ## What This Is
 MiroFish is a multi-agent social simulation engine. On Strixy it is the
 **evidence and scenario-synthesis layer** for the private Schwalpaca and Kalshi
