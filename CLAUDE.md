@@ -28,15 +28,29 @@ systemctl --user list-timers --all
 python3 scripts/verify_pipeline_contract.py
 ```
 
-These checks passed. The next planner session should create the Phase 2 plan;
-do not begin Phase 2 implementation from this entry-point document alone.
+These checks passed.
 
-## Open input for Phase 2 planning — 2026-08-02
+## Phase 2 handoff — planned 2026-08-02
+
+`PHASE2_PLAN.md` is READY FOR EXECUTION. It contracts the incoming
+trading-intelligence request into three serial milestones:
+
+1. P2-M1 — exact per-contract Polymarket observations and prompt-visible
+   ID-to-question mapping;
+2. P2-M2 — signed `{-1,0,+1}` direction per exact hypothesis/contract pair;
+3. P2-M3 — the first naturally scheduled live canary and phase closeout.
+
+There are no current user checkpoints. The next executor must read the entire
+plan, claim Lane S, execute P2-M1 only, run its named Verify steps, commit, and
+stop. Do not implement from the request document directly and do not combine
+P2-M1 with signed directions.
+
+## Phase 2 scope source — 2026-08-02
 
 `REQUEST-trading-intelligence-phase6.md` (repo root) is an incoming
-request from the trading-intelligence Phase 6 experiment lane. Read it
-during Phase 2 planning; it is an input to that plan, not a patch to
-apply directly. Two asks:
+request from the trading-intelligence Phase 6 experiment lane. It has now
+been incorporated into `PHASE2_PLAN.md`; it remains a scope source, not a
+patch to apply directly. Two asks:
 
 1. **Per-market Polymarket observations** — emit one observation per
    market carrying `venueContractId`, instead of one per source. Today
