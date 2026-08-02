@@ -267,6 +267,140 @@ def expect_rejected(callback, expected_message):
         raise AssertionError(f"fixture was not rejected: {expected_message}")
 
 
+def polymarket_selection_fixtures():
+    fetched_at = "2026-07-25T12:00:00Z"
+
+    def market(contract_id, question):
+        return {
+            "venueContractId": contract_id,
+            "question": question,
+            "outcomeLabel": "Yes",
+            "observedAt": "2026-07-25T11:58:00Z",
+            "fetchedAt": fetched_at,
+            "marketDerived": True,
+            "independenceGroup": "polymarket",
+        }
+
+    top = [market(f"top-{index}", f"Top question {index}?") for index in range(11)]
+    shifts = [deepcopy(top[0])]
+    shifts.extend(
+        market(f"shift-{index}", f"Shift question {index}?")
+        for index in range(1, 6)
+    )
+    crucix = {
+        "crucix": {"timestamp": fetched_at},
+        "sourceHealth": {
+            "Polymarket": {
+                "status": "ok",
+                "sourceType": "market",
+                "independenceGroup": "polymarket",
+                "marketDerived": True,
+            }
+        },
+        "sources": {
+            "Polymarket": {
+                "status": "ok",
+                "timestamp": fetched_at,
+                "sourceType": "market",
+                "independenceGroup": "polymarket",
+                "marketDerived": True,
+                "top": top,
+                "highProbShifts": shifts,
+            }
+        },
+    }
+    manifest = pipeline.build_observation_manifest(
+        crucix,
+        report_id="prediction_selection_fixture",
+        fetched_at=fetched_at,
+    )
+    granular = [
+        item
+        for item in manifest["observations"]
+        if item["source_id"].startswith("Crucix/Polymarket/")
+    ]
+    expected_sources = [
+        *(f"Crucix/Polymarket/top-{index}" for index in range(10)),
+        *(f"Crucix/Polymarket/shift-{index}" for index in range(1, 5)),
+    ]
+    granular_sources = [item["source_id"] for item in granular]
+    check(
+        granular_sources == expected_sources,
+        "Polymarket selection lost caps, order, or first-seen deduplication",
+    )
+    check(
+        granular[0]["payload_ref"] == "/sources/Polymarket/top/0"
+        and granular[-1]["payload_ref"]
+        == "/sources/Polymarket/highProbShifts/4",
+        "Polymarket selection emitted the wrong payload refs",
+    )
+    check(
+        "Crucix/Polymarket/top-10" not in granular_sources
+        and "Crucix/Polymarket/shift-5" not in granular_sources,
+        "Polymarket selection exceeded the 10/5 caps",
+    )
+    check(
+        sum(
+            item["source_id"] == "Crucix/Polymarket"
+            for item in manifest["observations"]
+        ) == 1,
+        "Polymarket aggregate provenance was not retained exactly once",
+    )
+    check(
+        granular[0]["content_sha256"] == pipeline._sha256(top[0]),
+        "granular Polymarket observation did not hash the individual market",
+    )
+
+    malformed = deepcopy(crucix)
+    del malformed["sources"]["Polymarket"]["top"][0]["venueContractId"]
+    expect_rejected(
+        lambda: pipeline.build_observation_manifest(
+            malformed,
+            report_id="prediction_malformed_fixture",
+            fetched_at=fetched_at,
+        ),
+        "venueContractId",
+    )
+
+    missing_question = deepcopy(crucix)
+    del missing_question["sources"]["Polymarket"]["top"][0]["question"]
+    expect_rejected(
+        lambda: pipeline._polymarket_observation_labels(missing_question),
+        "missing question",
+    )
+
+    empty = deepcopy(crucix)
+    empty["sources"]["Polymarket"]["top"] = []
+    empty["sources"]["Polymarket"]["highProbShifts"] = []
+    aggregate_only = pipeline.build_observation_manifest(
+        empty,
+        report_id="prediction_aggregate_fixture",
+        fetched_at=fetched_at,
+    )
+    check(
+        [item["source_id"] for item in aggregate_only["observations"]]
+        == ["Crucix/Polymarket"],
+        "empty Polymarket arrays did not retain aggregate-only provenance",
+    )
+    pipeline.build_scenario_synthesis(
+        aggregate_only,
+        [{
+            "hypothesis_id": "aggregate-fallback",
+            "claim": "Only aggregate market provenance is available.",
+            "epistemic_status": "unknown",
+            "confidence": "low",
+            "supporting_observation_ids": [],
+            "contradicting_observation_ids": [],
+            "unknowns": ["No exact contract was supplied."],
+            "falsifiers": ["An exact contract appears."],
+            "watch_conditions": ["Watch for a populated market payload."],
+            "affected_entities": [],
+            "market_source_ids": ["Crucix/Polymarket"],
+        }],
+        generated_at=fetched_at,
+    )
+
+
 def scenario_contract_fixtures(temp_dir):
     fixture = json.loads(
         (ROOT / "fixtures/scenario-input.json").read_text(encoding="utf-8")
@@ -305,13 +439,48 @@ def scenario_contract_fixtures(temp_dir):
         "wrong observation schema",
     )
 
+    granular_polymarket = [
+        item
+        for item in manifest["observations"]
+        if item["source_id"].startswith("Crucix/Polymarket/")
+    ]
+    check(
+        [item["source_id"] for item in granular_polymarket] == [
+            "Crucix/Polymarket/fixture-contract",
+            "Crucix/Polymarket/fixture-shift-contract",
+        ],
+        "fixture did not emit exact per-contract Polymarket observations",
+    )
+    check(
+        [item["payload_ref"] for item in granular_polymarket] == [
+            "/sources/Polymarket/top/0",
+            "/sources/Polymarket/highProbShifts/1",
+        ],
+        "fixture emitted incorrect per-contract payload refs",
+    )
+    check(
+        granular_polymarket[0]["source_type"] == "market"
+        and granular_polymarket[0]["market_derived"] is True
+        and granular_polymarket[0]["status"] == "ok"
+        and granular_polymarket[0]["observed_at"]
+        == "2026-07-25T11:58:00Z"
+        and granular_polymarket[0]["fetched_at"]
+        == "2026-07-25T12:00:00Z"
+        and granular_polymarket[0]["staleness_seconds"] == 120,
+        "fixture lost exact Polymarket provenance or timestamps",
+    )
+    check(
+        sum(
+            item["source_id"] == "Crucix/Polymarket"
+            for item in manifest["observations"]
+        ) == 1,
+        "fixture lost aggregate Polymarket provenance",
+    )
     polymarket_groups = {
         item["independence_group"]
         for item in manifest["observations"]
-        if item["source_id"] in {
-            "Crucix/Polymarket",
-            "Crucix/Adanos/polymarket",
-        }
+        if item["source_id"] == "Crucix/Adanos/polymarket"
+        or item["source_id"].startswith("Crucix/Polymarket")
     }
     check(
         polymarket_groups == {"polymarket"},
@@ -332,7 +501,11 @@ def scenario_contract_fixtures(temp_dir):
         fixture["hypotheses"],
         generated_at=fixture["fetched_at"],
     )
-    evidence_index = pipeline.render_observation_reference_index(manifest)
+    source_labels = pipeline._polymarket_observation_labels(fixture["crucix"])
+    evidence_index = pipeline.render_observation_reference_index(
+        manifest,
+        source_labels,
+    )
     check(
         all(
             item["observation_id"] in evidence_index
@@ -340,6 +513,34 @@ def scenario_contract_fixtures(temp_dir):
         ),
         "live evidence index omitted an observation ID",
     )
+    check(
+        "question=Will the fixture agreement be signed?" in evidence_index
+        and "direction target=YES outcome" in evidence_index
+        and "ends=2026-07-27T12:00:00Z" in evidence_index,
+        "Polymarket reference labels omitted question, YES semantics, or end date",
+    )
+    check(
+        "scope=aggregate-provenance-only; do not cite" in evidence_index,
+        "aggregate Polymarket reference was not labeled provenance-only",
+    )
+    long_brief = ("Long fixture body. " * 700) + "\n\n" + evidence_index
+    repair_prompt = pipeline._scenario_repair_prompt(
+        "fixture report",
+        long_brief,
+        manifest,
+    )
+    check(
+        evidence_index.strip() in repair_prompt
+        and "[...middle of brief omitted...]" in repair_prompt,
+        "scenario repair truncation did not preserve the complete reference index",
+    )
+    for prompt in (pipeline.SIMULATION_REQUIREMENT, repair_prompt):
+        check(
+            "Crucix/Polymarket/<venueContractId>" in prompt
+            and "aggregate provenance only" in prompt
+            and "market_observation_ids" in prompt,
+            "scenario prompt lost exact Polymarket citation rules",
+        )
     embedded_report = (
         "# Backend intermediate\n\n"
         "Simulation narrative omitted from the canonical publication.\n\n"
@@ -355,6 +556,23 @@ def scenario_contract_fixtures(temp_dir):
         generated_at=fixture["fetched_at"],
     )
     check(extracted == artifact, "live scenario extraction changed the artifact")
+
+    aggregate_id = next(
+        item["observation_id"]
+        for item in manifest["observations"]
+        if item["source_id"] == "Crucix/Polymarket"
+    )
+    aggregate_citation = deepcopy(artifact)
+    aggregate_citation["hypotheses"][1]["market_observation_ids"].append(
+        aggregate_id
+    )
+    expect_rejected(
+        lambda: pipeline.validate_scenario_synthesis(
+            aggregate_citation,
+            manifest,
+        ),
+        "aggregate Polymarket",
+    )
 
     repair_calls = []
     invalid_artifact = deepcopy(artifact)
@@ -640,6 +858,7 @@ def main():
         manifest, artifact, markdown = scenario_contract_fixtures(temp_dir)
         artifact_endpoint_fixture(temp_dir, manifest, artifact)
     source_total_fixture()
+    polymarket_selection_fixtures()
     main_manifest_input_fixture()
     compose_fixture()
     host_default_fixture()
@@ -647,7 +866,9 @@ def main():
     print(
         "PASS: zero-byte, undersized, invalid UTF-8, partial, valid, atomic-write, "
         "stale/current checkpoint, idempotent skip, observation provenance, "
-        "scenario synthesis, schema rejection, and artifact endpoint fixtures"
+        "granular Polymarket identity/deduplication, aggregate-citation "
+        "rejection, scenario synthesis, schema rejection, and artifact endpoint "
+        "fixtures"
     )
     print(f"CP0 bundle: {cp0_dir}")
 

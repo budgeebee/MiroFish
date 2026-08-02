@@ -211,6 +211,55 @@ def _latest_market_observed_at(payload):
     return max(candidates).isoformat().replace("+00:00", "Z")
 
 
+def _selected_polymarket_markets(payload):
+    """Return the market rows shown in the brief, deduplicated in display order."""
+    if not isinstance(payload, dict):
+        return []
+    selected = []
+    seen_contract_ids = set()
+    for collection, limit in (("top", 10), ("highProbShifts", 5)):
+        rows = payload.get(collection) or []
+        if not isinstance(rows, list):
+            raise ValueError(f"Polymarket {collection} must be a list")
+        for index, market in enumerate(rows[:limit]):
+            if not isinstance(market, dict):
+                raise ValueError(f"Polymarket {collection}[{index}] must be an object")
+            contract_id = market.get("venueContractId")
+            if not isinstance(contract_id, str) or not contract_id.strip():
+                raise ValueError(
+                    f"Polymarket {collection}[{index}] is missing venueContractId"
+                )
+            contract_id = contract_id.strip()
+            if contract_id in seen_contract_ids:
+                continue
+            seen_contract_ids.add(contract_id)
+            selected.append((
+                contract_id,
+                market,
+                f"/sources/Polymarket/{collection}/{index}",
+            ))
+    return selected
+
+
+def _polymarket_observation_labels(crucix_data):
+    """Build prompt-only question labels keyed by granular Polymarket source ID."""
+    payload = crucix_data.get("sources", {}).get("Polymarket")
+    labels = {}
+    for contract_id, market, _ in _selected_polymarket_markets(payload):
+        question = market.get("question")
+        if not isinstance(question, str) or not question.strip():
+            raise ValueError(
+                f"Polymarket contract {contract_id} is missing question"
+            )
+        question = " ".join(question.split())
+        end_date = market.get("endDate")
+        end_note = f" | ends={end_date}" if end_date else ""
+        labels[f"Crucix/Polymarket/{contract_id}"] = (
+            f"question={question} | direction target=YES outcome{end_note}"
+        )
+    return labels
+
+
 def _observation(
     source_id,
     payload,
@@ -306,6 +355,34 @@ def build_observation_manifest(
                 emitted_section = True
             if emitted_section:
                 continue
+
+        if name == "Polymarket" and isinstance(payload, dict):
+            for contract_id, market, payload_ref in _selected_polymarket_markets(
+                payload
+            ):
+                observations.append(_observation(
+                    f"Crucix/Polymarket/{contract_id}",
+                    market,
+                    source_type="market",
+                    independence_group=(
+                        market.get("independenceGroup")
+                        or payload.get("independenceGroup")
+                        or health.get("independenceGroup")
+                        or "polymarket"
+                    ),
+                    market_derived=True,
+                    status=status,
+                    fetched_at=(
+                        market.get("fetchedAt")
+                        or payload.get("fetchedAt")
+                        or payload.get("timestamp")
+                        or crucix_fetched_at
+                    ),
+                    payload_ref=payload_ref,
+                    observed_at=(
+                        market.get("observedAt") or market.get("observed_at")
+                    ),
+                ))
 
         source_type = health.get("sourceType") or (
             payload.get("sourceType") if isinstance(payload, dict) else None
@@ -515,6 +592,16 @@ def validate_scenario_synthesis(artifact, manifest, market_ids=None):
         for observation in manifest.get("observations", [])
         if observation.get("market_derived")
     }
+    granular_polymarket_ids = {
+        observation["observation_id"]
+        for observation in manifest.get("observations", [])
+        if observation.get("source_id", "").startswith("Crucix/Polymarket/")
+    }
+    aggregate_polymarket_ids = {
+        observation["observation_id"]
+        for observation in manifest.get("observations", [])
+        if observation.get("source_id") == "Crucix/Polymarket"
+    }
     hypothesis_ids = set()
     for hypothesis in artifact.get("hypotheses", []):
         field_difference = set(hypothesis) ^ HYPOTHESIS_FIELDS
@@ -555,6 +642,15 @@ def validate_scenario_synthesis(artifact, manifest, market_ids=None):
             )
         if not set(hypothesis.get("market_observation_ids", [])) <= market_ids:
             raise ValueError(f"{hypothesis_id}: non-market ID in market evidence")
+        if (
+            granular_polymarket_ids
+            and set(hypothesis.get("market_observation_ids", []))
+            & aggregate_polymarket_ids
+        ):
+            raise ValueError(
+                f"{hypothesis_id}: aggregate Polymarket observation is "
+                "provenance-only when exact contracts exist"
+            )
         if not isinstance(hypothesis.get("claim"), str) or not hypothesis["claim"]:
             raise ValueError(f"{hypothesis_id}: missing claim")
         for field in (
@@ -571,7 +667,7 @@ def validate_scenario_synthesis(artifact, manifest, market_ids=None):
     return artifact
 
 
-def render_observation_reference_index(manifest) -> str:
+def render_observation_reference_index(manifest, source_labels=None) -> str:
     """Give the live report generator resolvable evidence IDs, not raw authority."""
     validate_observation_manifest(manifest)
     lines = [
@@ -582,13 +678,28 @@ def render_observation_reference_index(manifest) -> str:
         "not independent confirmation.",
         "",
     ]
+    source_labels = source_labels or {}
+    has_granular_polymarket = any(
+        item.get("source_id", "").startswith("Crucix/Polymarket/")
+        for item in manifest["observations"]
+    )
     for observation in manifest["observations"]:
+        source_id = observation["source_id"]
+        suffix = ""
+        if source_id.startswith("Crucix/Polymarket/"):
+            label = source_labels.get(source_id)
+            if not label:
+                raise ValueError(f"missing prompt label for {source_id}")
+            suffix = f" | {label}"
+        elif source_id == "Crucix/Polymarket" and has_granular_polymarket:
+            suffix = " | scope=aggregate-provenance-only; do not cite"
         lines.append(
             f"- `{observation['observation_id']}` | "
-            f"{observation['source_id']} | status={observation['status']} | "
+            f"{source_id} | status={observation['status']} | "
             f"type={observation['source_type']} | "
             f"market_derived={str(observation['market_derived']).lower()} | "
             f"independence_group={observation['independence_group']}"
+            f"{suffix}"
         )
     lines.append("")
     return "\n".join(lines)
@@ -659,6 +770,12 @@ def _scenario_repair_prompt(report_text, brief_text, manifest, feedback=""):
         if feedback
         else ""
     )
+    reference_marker = "## Observation Reference Index"
+    reference_index = ""
+    marker_index = brief_text.find(reference_marker)
+    if marker_index >= 0:
+        reference_index = brief_text[marker_index:].strip()
+        brief_text = brief_text[:marker_index].rstrip()
     if len(brief_text) > 8000:
         brief_text = (
             brief_text[:5000]
@@ -688,11 +805,20 @@ confirmation. Non-market IDs may appear only in supporting or contradicting
 lists. If the evidence cannot support a claim, narrow the claim or record the
 gap as an unknown. Do not create descriptive replacement IDs.
 
+For direct Polymarket claims, cite only exact
+`Crucix/Polymarket/<venueContractId>` observations. When those exact contract
+observations exist, `Crucix/Polymarket` is aggregate provenance only and must
+not appear in `market_observation_ids`. Use the complete reference index below
+to map each exact observation ID to its market question and YES outcome.
+
 The publisher overwrites `schema_version`, `report_id`, and `generated_at`, but
 include those three top-level fields plus `hypotheses`.
 {retry_note}
 ALLOWED OBSERVATIONS:
 {json.dumps(allowed, ensure_ascii=False)}
+
+OBSERVATION REFERENCE INDEX:
+{reference_index or "(not supplied)"}
 
 ORIGINAL EVIDENCE BRIEF:
 {brief_text}
@@ -1155,7 +1281,10 @@ Each hypothesis must contain exactly:
 Use only IDs from the Observation Reference Index. Put market IDs only in
 `market_observation_ids`. Use null horizon boundaries when the evidence does not
 support a time boundary. The metadata values may be placeholders; the publisher
-sets them after validation.\
+sets them after validation. For direct Polymarket claims, cite only exact
+`Crucix/Polymarket/<venueContractId>` observations from the index. When those
+exact observations exist, `Crucix/Polymarket` is aggregate provenance only and
+must not appear in `market_observation_ids`.\
 """
 
 # ---------------------------------------------------------------------------
@@ -3549,7 +3678,10 @@ def main():
         fetched_at=manifest_fetched_at,
     )
     print(f"  Observation manifest: {len(manifest['observations'])} observations")
-    md += "\n" + render_observation_reference_index(manifest)
+    md += "\n" + render_observation_reference_index(
+        manifest,
+        _polymarket_observation_labels(crucix_data),
+    )
 
     # Write to temp file (or output dir for dry-run)
     if args.dry_run:

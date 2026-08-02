@@ -1,7 +1,7 @@
 {
   "manifest_schema": "observation-manifest.v1",
   "observation_schema": "observation.v1",
-  "observation_count": 8,
+  "observation_count": 10,
   "scenario_schema": "scenario-synthesis.v1",
   "hypothesis_count": 4,
   "required_sections": [

@@ -102,6 +102,35 @@
             "marketDerived": true,
             "independenceGroup": "polymarket"
           }
+        ],
+        "highProbShifts": [
+          {
+            "venueContractId": "fixture-contract",
+            "outcomeLabel": "Yes",
+            "question": "Will the fixture agreement be signed?",
+            "bestBid": 0.42,
+            "bestAsk": 0.46,
+            "mid": 0.44,
+            "last": 0.43,
+            "observedAt": "2026-07-25T11:58:00Z",
+            "fetchedAt": "2026-07-25T12:00:00Z",
+            "marketDerived": true,
+            "independenceGroup": "polymarket"
+          },
+          {
+            "venueContractId": "fixture-shift-contract",
+            "outcomeLabel": "Yes",
+            "question": "Will the fixture shipping route reopen?",
+            "bestBid": 0.61,
+            "bestAsk": 0.65,
+            "mid": 0.63,
+            "last": 0.62,
+            "observedAt": "2026-07-25T11:57:00Z",
+            "fetchedAt": "2026-07-25T12:00:00Z",
+            "endDate": "2026-07-27T12:00:00Z",
+            "marketDerived": true,
+            "independenceGroup": "polymarket"
+          }
         ]
       }
     }
@@ -195,7 +224,7 @@
         "industrial firms"
       ],
       "market_source_ids": [
-        "Crucix/Polymarket",
+        "Crucix/Polymarket/fixture-contract",
         "Crucix/Adanos/polymarket"
       ]
     },

@@ -8,17 +8,17 @@ Canonical plan: `PHASE2_PLAN.md`
       artifacts, strict freshness verification, and daily user timer.
 - [x] Trading-intelligence Phase 6 request recorded as Phase 2 planning input.
 - [x] Phase 2 audited and planned on 2026-08-02.
+- [x] P2-M1 emitted exact per-contract Polymarket observations, retained the
+      aggregate as provenance-only for hypothesis citations, and preserved the
+      complete ID-to-question reference index.
 
 ## Next
 
-- [ ] P2-M1 — emit exact per-contract Polymarket observations, make the
-      aggregate provenance-only for hypothesis citations, and preserve the
-      complete ID-to-question reference index.
+- [ ] P2-M2 — add and validate signed `market_directions` per exact
+      hypothesis/contract pair.
 
 ## Later
 
-- [ ] P2-M2 — add and validate signed `market_directions` per exact
-      hypothesis/contract pair.
 - [ ] P2-M3 — verify the first naturally scheduled live report and close Phase
       2.
 

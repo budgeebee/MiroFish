@@ -828,7 +828,7 @@ Record the divergence in Amendments and halt. Do not mark the phase complete.
 
 ## Milestone status
 
-- [ ] P2-M1 — Exact Polymarket observation identity
+- [x] P2-M1 — Exact Polymarket observation identity
 - [ ] P2-M2 — Signed hypothesis/contract direction
 - [ ] P2-M3 — Scheduled live canary and closeout
 
@@ -872,9 +872,70 @@ Consumer audit:
   exact hypothesis-field consumer was found.
 ```
 
-### P2-M1 — pending
+### P2-M1 — 2026-08-02 — PASS
 
-Executor appends real output here.
+```text
+Commit target:
+  P2-M1 add contract-level Polymarket observations
+
+Implementation:
+  - Added stable top[:10] + highProbShifts[:5] selection with first-seen
+    venueContractId deduplication and fail-closed malformed-row validation.
+  - Emitted child observation.v1 entries with exact source IDs, payload refs,
+    per-market hashes/timestamps, and shared Polymarket provenance while
+    retaining the aggregate exactly once.
+  - Made aggregate direct Polymarket provenance non-citable whenever child
+    contracts exist; aggregate-only fallback remains valid for empty arrays.
+  - Added prompt-only question/YES/end-date labels and preserved the complete
+    Observation Reference Index outside repair-prompt body truncation.
+
+DISCRETION:
+  Private helpers are `_selected_polymarket_markets` and
+  `_polymarket_observation_labels`. The static fixture carries one top market,
+  one overlapping shift, and one non-overlapping shift; a generated fixture
+  proves the full 10/5 caps without adding eleven repetitive rows to JSON.
+
+python3 scripts/verify_pipeline_contract.py
+  PASS: zero-byte, undersized, invalid UTF-8, partial, valid, atomic-write,
+  stale/current checkpoint, idempotent skip, observation provenance, granular
+  Polymarket identity/deduplication, aggregate-citation rejection, scenario
+  synthesis, schema rejection, and artifact endpoint fixtures
+  CP0 bundle: /tmp/mirofish-p1-m3-cp0
+
+python3 scripts/verify_daily_freshness.py --fixture
+  {"fixture": true, "report_id": "prediction_20260727_000500", "status": "ok"}
+
+python3 -m py_compile scripts/crucix_to_mirofish.py
+  scripts/verify_pipeline_contract.py scripts/verify_daily_freshness.py api_server.py
+  exit 0, no output
+
+git diff --check
+  exit 0, no output
+
+Named CP0 manifest inspection:
+  report_id=prediction_cp0_fixture
+  observation_count=10
+  granular source/payload pairs:
+    Crucix/Polymarket/fixture-contract
+      /sources/Polymarket/top/0
+    Crucix/Polymarket/fixture-shift-contract
+      /sources/Polymarket/highProbShifts/1
+  aggregate_count=1
+
+Read-only current Crucix shape probe:
+  {"aggregate": 1, "granular": 10, "index_chars": 9132, "labeled": 10}
+
+Files before closeout commit:
+  M PHASE2_PLAN.md
+  M TODO.md
+  M fixtures/scenario-expected-shape.json
+  M fixtures/scenario-input.json
+  M scripts/crucix_to_mirofish.py
+  M scripts/verify_pipeline_contract.py
+
+No live pipeline, service, timer, API, permission, historical output, or other
+repository was changed. P2-M2 was not started.
+```
 
 ### P2-M2 — pending
 
@@ -894,6 +955,19 @@ Executor appends real output here.
 - Current live `highProbShifts[:5]` fully overlaps `top[:10]`; fixture tests
   must still cover a non-overlapping shift.
 - P2-M1 ends before `market_directions` begins.
+
+### P2-M1 to P2-M2 executor — 2026-08-02
+
+- P2-M1 is verified and committed; begin only from its clean commit.
+- Exact direct-Polymarket IDs are the manifest observations whose `source_id`
+  begins `Crucix/Polymarket/`. The exact aggregate source remains present but
+  validation rejects it from hypotheses whenever child IDs exist.
+- `render_observation_reference_index` now requires the prompt-only label map
+  when granular IDs exist; runtime and fixtures both pass it explicitly.
+- Repair prompt truncation preserves the complete reference index. Do not
+  regress that behavior while adding `market_directions`.
+- Current live payload produces 10 unique labeled child contracts plus one
+  aggregate. P2-M2 must not run a live pipeline.
 
 ## Amendments
 
