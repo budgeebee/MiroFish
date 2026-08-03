@@ -550,6 +550,13 @@ def scenario_contract_fixtures(temp_dir):
             and "abstention" in prompt,
             "scenario prompt lost signed direction or abstention semantics",
         )
+        check(
+            '"direction":-1|0|1' not in prompt
+            and '{"observation_id":"obs-...","direction":-1}' in prompt
+            and '{"observation_id":"obs-...","direction":0}' in prompt
+            and '{"observation_id":"obs-...","direction":1}' in prompt,
+            "scenario prompt contains invalid JSON direction examples",
+        )
     embedded_report = (
         "# Backend intermediate\n\n"
         "Simulation narrative omitted from the canonical publication.\n\n"

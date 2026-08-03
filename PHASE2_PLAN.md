@@ -1076,6 +1076,71 @@ Decide whether to amend M3 to permit a targeted repair/retry investigation or
 wait for another naturally scheduled canary. Do not mark Phase 2 complete from
 the prior report.
 
+### A2 — 2026-08-02 — P2-M3: authorize one targeted prompt repair and resume
+
+Reality:
+The user authorized "targeted repair and retry." Audit identified an invalid
+JSON pseudo-example introduced by P2-M2 in both generation prompts:
+`{"direction":-1|0|1}`. The local repair failure occurred while parsing JSON,
+and the scripts directory is bind-mounted into `mirofish-api`, so this prompt
+can be corrected without rebuilding or restarting infrastructure. The completed
+simulation and step-6 checkpoint remain available.
+
+Decision class:
+User-approved amendment to the locked P2-M3 stop condition.
+
+Impact:
+P2-M3 may modify only `scripts/crucix_to_mirofish.py`,
+`scripts/verify_pipeline_contract.py`, and the three existing M3 closeout docs.
+Replace the pseudo-example with valid JSON examples, add a deterministic
+regression assertion, run the local contract checks, then call `/resume`
+exactly once against the existing checkpoint. Do not start a new simulation,
+restart a service, change a model, relax validation, or add JSON repair logic.
+
+Executor action:
+Proceed with the narrow prompt correction and one checkpoint resume. If
+publication or live verification fails again, record the new exact failure and
+halt. If it passes, run all original M3 gates and close Phase 2 in one focused
+commit named `P2-M3 repair and verify live market direction contract`.
+
+Planner/user resolution required:
+Resolved by the user's explicit authorization at 22:19 PDT.
+
+### A3 — 2026-08-02 — P2-M3: targeted checkpoint retry also failed publication
+
+Reality:
+The invalid `-1|0|1` pseudo-JSON was replaced with three valid direction-object
+examples in both prompts, and the deterministic contract/freshness/compile
+checks passed. The single authorized `/resume` launched PID 43 and reused the
+completed `sim_77c000f70603` simulation and `report_e0b9d81f5623`; no new
+simulation ran. The embedded report still lacked the machine-readable marker.
+Both local `writer-qwen3.6-27b` constrained-repair attempts returned, but the
+second response was still invalid JSON: `Unterminated string starting at: line
+31 column 9 (char 1176)`. The worker exited, no `20260803` report was published,
+and the current step-6 checkpoint remains.
+
+Decision class:
+LOCKED under A2. A2 permits exactly one checkpoint resume and explicitly
+forbids another run, model change, validation relaxation, or new JSON-repair
+logic in this executor session.
+
+Impact:
+The prompt defect was real but not sufficient to make this local model produce
+valid scenario JSON reliably. P2-M3 and Phase 2 remain open; none of the live
+direction or downstream identity gates can pass without a published report.
+
+Executor action:
+Retained the valid prompt correction and its regression assertion, recorded the
+failed retry, and halted. Did not issue a second resume, start a simulation,
+change models, relax the schema, restart infrastructure, mutate output, or
+write another repository.
+
+Planner/user resolution required:
+Replan the publication-repair boundary before another run. Likely options are a
+more reliable configured repair backend or a separately contracted,
+deterministic JSON-syntax repair layer that still passes the existing semantic
+validator; neither is authorized by A2.
+
 Use this format for a divergence:
 
 ```text

@@ -862,7 +862,10 @@ not appear in `market_observation_ids`. Use the complete reference index below
 to map each exact observation ID to its market question and YES outcome.
 For every exact direct-Polymarket ID in `market_observation_ids`, in the same
 order, include exactly one `market_directions` object shaped as
-`{{"observation_id":"obs-...","direction":-1|0|1}}`. Direction refers to the
+one of these valid JSON examples (replace `obs-...` with an allowed ID):
+`{{"observation_id":"obs-...","direction":-1}}`,
+`{{"observation_id":"obs-...","direction":0}}`, or
+`{{"observation_id":"obs-...","direction":1}}`. Direction refers to the
 contract's YES outcome: `1` means the claim makes YES more likely, `-1` means
 less likely, and `0` is a genuine directional abstention. Use `0` freely when a
 relevant cited contract has no supportable sign. Omit unrelated contracts from
@@ -1363,8 +1366,11 @@ exact observations exist, `Crucix/Polymarket` is aggregate provenance only and
 must not appear in `market_observation_ids`.
 
 For every exact direct-Polymarket ID in `market_observation_ids`, emit exactly
-one `market_directions` object in the same order:
-`{"observation_id":"obs-...","direction":-1|0|1}`. Direction targets the
+one `market_directions` object in the same order, using one of these valid JSON
+forms (replace `obs-...` with an ID from the index):
+`{"observation_id":"obs-...","direction":-1}`,
+`{"observation_id":"obs-...","direction":0}`, or
+`{"observation_id":"obs-...","direction":1}`. Direction targets the
 contract's YES outcome: `1` means the hypothesis makes YES more likely, `-1`
 means less likely, and `0` is a genuine directional abstention. Use `0` freely
 when a relevant cited contract has no supportable sign. Omit unrelated
