@@ -1301,6 +1301,67 @@ Instrument `_request_scenario_repair` to report sanitized response keys,
 optionally save a protected raw failure response), then make one observed retry.
 Do not guess at another M3 configuration change before seeing that evidence.
 
+### A9 — 2026-08-03 — P2-M3: authorize sanitized M3 response diagnostics
+
+Reality:
+The user authorized the A8 diagnostic-and-retry recommendation. The current
+backend directly indexes `choices[0].message.content` and collapses missing
+fields to the string `KeyError`, which is insufficient to distinguish an empty
+choice, policy response, alternate message field, or API status body.
+
+Decision class:
+User-approved amendment to A8's response-extraction boundary.
+
+Impact:
+Add sanitized shape metadata for MiniMax responses: top-level keys, base status,
+model, choice count, finish reason, message keys, content type/length/object
+presence, reasoning type/length/count, output-sensitivity flags, and usage keys.
+Never log the prompt, credentials, raw content, or raw reasoning. Include this
+metadata in missing/empty/non-object response errors and preserve the existing
+strict semantic validator. Add a deterministic no-leak regression fixture,
+then permit one checkpoint resume. Do not change model/configuration again.
+
+Executor action:
+Implement and locally verify sanitized diagnostics, then resume the existing
+completed checkpoint exactly once. If publication succeeds, run MiroFish live
+gates; if it fails, record the now-specific metadata and halt.
+
+Planner/user resolution required:
+Resolved by the user's explicit "ok do that" authorization.
+
+### A10 — 2026-08-03 — P2-M3: M3 exhausts completion budget on reasoning
+
+Reality:
+The A9 sanitized diagnostics passed their no-leak fixture and the single
+instrumented resume launched PID 160 against cached `sim_e539fd57be89` /
+`report_48529846ff56`. The MiniMax response was HTTP-successful with one choice,
+`base_resp.status_code=0`, and no sensitivity flag, but ended with
+`finish_reason=length`. Its message had no `content` field, contained one
+`reasoning_details` block and 7,901 reasoning characters, and used the configured
+2,048-token completion budget before producing a final answer. No report was
+published and the step-6 checkpoint remains.
+
+Decision class:
+LOCKED under A9. Its single observed retry is exhausted.
+
+Impact:
+The failure is now diagnosed: strict M3 did not return malformed JSON or an
+alternate final field; its reasoning consumed the full completion budget, so
+there was no final content to parse. The prompt and semantic validator were
+never exercised against a candidate JSON object. P2-M3 and Phase 2 remain open.
+
+Executor action:
+Retained the sanitized no-leak diagnostics and strict M3 configuration,
+recorded the exact response metadata, and halted. Did not issue another resume,
+change the completion budget/reasoning mode, relax validation, restart
+infrastructure, mutate output, or write another repository.
+
+Planner/user resolution required:
+Amend the M3 request to provide enough completion budget for reasoning plus the
+final JSON, or use a documented way to suppress/reduce reasoning if MiniMax M3
+supports it. Verify the chosen parameter with a minimal probe before one more
+checkpoint retry.
+
 Use this format for a divergence:
 
 ```text

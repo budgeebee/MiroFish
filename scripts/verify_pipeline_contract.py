@@ -408,22 +408,55 @@ def scenario_repair_backend_fixture():
     original_model = os.environ.get("LLM_MODEL_NAME")
 
     class FixtureResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
         def raise_for_status(self):
             return None
 
         def json(self):
-            return {"choices": [{"message": {"content": '{"fixture":true}'}}]}
+            return self.payload
 
     class FixtureSession:
+        def __init__(self, payload):
+            self.payload = payload
+
         def post(self, endpoint, **kwargs):
             calls.append((endpoint, kwargs))
-            return FixtureResponse()
+            return FixtureResponse(self.payload)
 
+    diagnostic_error = ""
     try:
-        pipeline._session = FixtureSession()
+        pipeline._session = FixtureSession({
+            "model": "MiniMax-M3",
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {"content": '{"fixture":true}'},
+            }],
+        })
         os.environ["LLM_API_KEY"] = "fixture-primary-key"
         os.environ["LLM_MODEL_NAME"] = "MiniMax-M3"
         content = pipeline._request_scenario_repair("fixture prompt")
+        pipeline._session = FixtureSession({
+            "model": "MiniMax-M3",
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {
+                    "reasoning_content": "private-reasoning-fixture",
+                    "reasoning_details": [{"text": "private-detail-fixture"}],
+                },
+            }],
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+            "usage": {"completion_tokens": 12},
+            "output_sensitive": False,
+            "output_sensitive_type": 0,
+        })
+        try:
+            pipeline._request_scenario_repair("private-prompt-fixture")
+        except ValueError as error:
+            diagnostic_error = str(error)
+        else:
+            raise AssertionError("missing MiniMax content was accepted")
     finally:
         pipeline._session = original_session
         if original_key is None:
@@ -436,7 +469,7 @@ def scenario_repair_backend_fixture():
             os.environ["LLM_MODEL_NAME"] = original_model
 
     check(content == '{"fixture":true}', "MiniMax repair response changed")
-    check(len(calls) == 1, "scenario repair did not use exactly one backend")
+    check(len(calls) == 2, "scenario repair did not use exactly one backend per call")
     endpoint, request = calls[0]
     check(
         endpoint == f"{pipeline.LLM_BASE_URL.rstrip('/')}/chat/completions"
@@ -461,6 +494,18 @@ def scenario_repair_backend_fixture():
         and "must begin with { and end with }" in system_prompt
         and "<think>" in system_prompt,
         "MiniMax repair lost strict raw-JSON prompting",
+    )
+    check(
+        "scenario repair response has no JSON object" in diagnostic_error
+        and '"choice_count": 1' in diagnostic_error
+        and '"finish_reason": "stop"' in diagnostic_error
+        and '"content_type": "NoneType"' in diagnostic_error
+        and '"reasoning_content_length": 25' in diagnostic_error
+        and '"reasoning_details_count": 1' in diagnostic_error
+        and "private-prompt-fixture" not in diagnostic_error
+        and "private-reasoning-fixture" not in diagnostic_error
+        and "private-detail-fixture" not in diagnostic_error,
+        "MiniMax response diagnostics are incomplete or leaked protected content",
     )
 
 
@@ -1076,8 +1121,9 @@ def main():
         "stale/current checkpoint, idempotent skip, observation provenance, "
         "granular Polymarket identity/deduplication, aggregate-citation "
         "rejection, signed market directions, abstention, invalid-type "
-        "rejection, ordered pairing, strict MiniMax M3 JSON repair, repair retry, "
-        "scenario synthesis, schema rejection, and artifact endpoint fixtures"
+        "rejection, ordered pairing, strict MiniMax M3 JSON repair, sanitized "
+        "response diagnostics, repair retry, scenario synthesis, schema "
+        "rejection, and artifact endpoint fixtures"
     )
     print(f"CP0 bundle: {cp0_dir}")
 

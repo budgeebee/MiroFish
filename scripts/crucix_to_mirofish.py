@@ -889,6 +889,51 @@ PRESERVED SIMULATION REPORT:
 """
 
 
+def _scenario_response_metadata(payload):
+    """Describe response shape without retaining prompt or generated content."""
+    if not isinstance(payload, dict):
+        return {"response_type": type(payload).__name__}
+    choices = payload.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices else {}
+    message = choice.get("message") if isinstance(choice, dict) else {}
+    message = message if isinstance(message, dict) else {}
+    content = message.get("content")
+    reasoning_content = message.get("reasoning_content")
+    reasoning_details = message.get("reasoning_details")
+    base_resp = payload.get("base_resp")
+    base_status = {}
+    if isinstance(base_resp, dict):
+        base_status = {
+            "status_code": base_resp.get("status_code"),
+            "status_msg": str(base_resp.get("status_msg", ""))[:160],
+        }
+    return {
+        "top_keys": sorted(payload),
+        "base_resp": base_status,
+        "model": payload.get("model"),
+        "choice_count": len(choices) if isinstance(choices, list) else None,
+        "finish_reason": choice.get("finish_reason")
+        if isinstance(choice, dict)
+        else None,
+        "message_keys": sorted(message),
+        "content_type": type(content).__name__,
+        "content_length": len(content) if isinstance(content, str) else None,
+        "content_has_object": "{" in content if isinstance(content, str) else False,
+        "reasoning_content_length": len(reasoning_content)
+        if isinstance(reasoning_content, str)
+        else None,
+        "reasoning_details_type": type(reasoning_details).__name__,
+        "reasoning_details_count": len(reasoning_details)
+        if isinstance(reasoning_details, list)
+        else None,
+        "output_sensitive": payload.get("output_sensitive"),
+        "output_sensitive_type": payload.get("output_sensitive_type"),
+        "usage_keys": sorted(payload.get("usage", {}))
+        if isinstance(payload.get("usage"), dict)
+        else [],
+    }
+
+
 def _request_scenario_repair(prompt):
     backends = [
         (
@@ -932,7 +977,17 @@ def _request_scenario_repair(prompt):
                 timeout=300,
             )
             response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+            payload = response.json()
+            metadata = _scenario_response_metadata(payload)
+            choices = payload.get("choices") if isinstance(payload, dict) else None
+            choice = choices[0] if isinstance(choices, list) and choices else None
+            message = choice.get("message") if isinstance(choice, dict) else None
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, str) or not content.strip() or "{" not in content:
+                raise ValueError(
+                    "scenario repair response has no JSON object; metadata="
+                    + json.dumps(metadata, sort_keys=True)
+                )
             print(f"  Scenario repair response received from {label} ({model})")
             return content
         except requests.HTTPError as error:
@@ -949,7 +1004,9 @@ def _request_scenario_repair(prompt):
             ValueError,
             requests.RequestException,
         ) as error:
-            errors.append(f"{label}: {type(error).__name__}")
+            errors.append(
+                f"{label}: {type(error).__name__}: {str(error)[:1200]}"
+            )
     if not errors:
         raise ValueError("scenario repair has no configured backend")
     raise ValueError("scenario repair backends failed: " + ", ".join(errors))
