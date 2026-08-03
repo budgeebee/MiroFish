@@ -401,6 +401,57 @@ def polymarket_selection_fixtures():
     )
 
 
+def scenario_repair_backend_fixture():
+    calls = []
+    original_session = pipeline._session
+    original_key = os.environ.get("LLM_API_KEY")
+    original_model = os.environ.get("LLM_MODEL_NAME")
+
+    class FixtureResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"fixture":true}'}}]}
+
+    class FixtureSession:
+        def post(self, endpoint, **kwargs):
+            calls.append((endpoint, kwargs))
+            return FixtureResponse()
+
+    try:
+        pipeline._session = FixtureSession()
+        os.environ["LLM_API_KEY"] = "fixture-primary-key"
+        os.environ["LLM_MODEL_NAME"] = "MiniMax-M3"
+        content = pipeline._request_scenario_repair("fixture prompt")
+    finally:
+        pipeline._session = original_session
+        if original_key is None:
+            os.environ.pop("LLM_API_KEY", None)
+        else:
+            os.environ["LLM_API_KEY"] = original_key
+        if original_model is None:
+            os.environ.pop("LLM_MODEL_NAME", None)
+        else:
+            os.environ["LLM_MODEL_NAME"] = original_model
+
+    check(content == '{"fixture":true}', "primary repair response changed")
+    check(len(calls) == 1, "scenario repair did not use exactly one backend")
+    endpoint, request = calls[0]
+    check(
+        endpoint == f"{pipeline.LLM_BASE_URL.rstrip('/')}/chat/completions"
+        and endpoint != f"{pipeline.LLAMA_SWAP_URL.rstrip('/')}/v1/chat/completions",
+        "scenario repair did not route exclusively to the primary API",
+    )
+    check(
+        request["headers"].get("Authorization") == "Bearer fixture-primary-key"
+        and request["json"]["model"] == "MiniMax-M3"
+        and request["json"]["temperature"] == 0.1
+        and request["timeout"] == 300,
+        "scenario repair lost the configured MiniMax M3 request contract",
+    )
+
+
 def scenario_contract_fixtures(temp_dir):
     fixture = json.loads(
         (ROOT / "fixtures/scenario-input.json").read_text(encoding="utf-8")
@@ -1003,6 +1054,7 @@ def main():
         artifact_endpoint_fixture(temp_dir, manifest, artifact)
     source_total_fixture()
     polymarket_selection_fixtures()
+    scenario_repair_backend_fixture()
     main_manifest_input_fixture()
     compose_fixture()
     host_default_fixture()
@@ -1012,8 +1064,8 @@ def main():
         "stale/current checkpoint, idempotent skip, observation provenance, "
         "granular Polymarket identity/deduplication, aggregate-citation "
         "rejection, signed market directions, abstention, invalid-type "
-        "rejection, ordered pairing, repair retry, scenario synthesis, schema "
-        "rejection, and artifact endpoint fixtures"
+        "rejection, ordered pairing, MiniMax M3 repair routing, repair retry, "
+        "scenario synthesis, schema rejection, and artifact endpoint fixtures"
     )
     print(f"CP0 bundle: {cp0_dir}")
 

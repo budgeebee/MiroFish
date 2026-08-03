@@ -1141,6 +1141,68 @@ more reliable configured repair backend or a separately contracted,
 deterministic JSON-syntax repair layer that still passes the existing semantic
 validator; neither is authorized by A2.
 
+### A4 — 2026-08-02 — P2-M3: switch scenario repair to MiniMax M3
+
+Reality:
+The user rejected local-AI repair and explicitly selected MiniMax M3. Runtime
+inspection confirms `LLM_MODEL_NAME=MiniMax-M3`,
+`LLM_BASE_URL=https://api.minimax.io/v1`, and a present primary API key. The
+current function always selects local `writer-qwen3.6-27b`; remote backends are
+disabled and, even when enabled, are reached only on transport failure rather
+than locally invalid JSON.
+
+Decision class:
+User-approved amendment to A3's publication-repair boundary.
+
+Impact:
+Replace the scenario-repair backend list with the configured primary MiniMax
+endpoint/model only. Add a deterministic test proving the endpoint, model,
+temperature, authorization header presence, and absence of local routing. Keep
+the prompt, two-attempt semantic-validation loop, schema, and fail-closed
+behavior unchanged. After local verification, permit exactly one more `/resume`
+against the existing completed checkpoint; do not start a new simulation.
+
+Executor action:
+Proceed with the backend switch, deterministic verification, and one checkpoint
+resume. If publication succeeds, run the original M3 live/downstream gates and
+close Phase 2. If it fails, record the exact result and halt.
+
+Planner/user resolution required:
+Resolved by the user's explicit MiniMax M3 selection.
+
+### A5 — 2026-08-02 — P2-M3: MiniMax M3 returned no JSON object
+
+Reality:
+The scenario repair path was switched exclusively to the configured primary
+MiniMax endpoint and a deterministic fixture proved the endpoint, model,
+authorization, temperature, timeout, and absence of local routing. All local
+contract checks passed. The single A4-authorized `/resume` launched PID 86 and
+reused `sim_77c000f70603` / `report_e0b9d81f5623`. Both repair calls were
+received from `primary (MiniMax-M3)`, but neither response contained a JSON
+object, ending with `scenario repair returned no JSON object`. The worker
+exited, no report was published, and the step-6 checkpoint remains current.
+
+Decision class:
+LOCKED under A4. A4 permits exactly one MiniMax checkpoint resume and requires
+halt on another publication failure.
+
+Impact:
+The user's backend choice is now honored and local repair is removed, but
+MiniMax M3's current response shape/content does not satisfy this JSON-only
+repair call. P2-M3 and Phase 2 remain open.
+
+Executor action:
+Retained the verified MiniMax-only routing, recorded the failed retry, and
+halted. Did not issue another resume, start a simulation, relax parsing or
+semantic validation, change models again, restart infrastructure, mutate
+output, or write another repository.
+
+Planner/user resolution required:
+Inspect a protected raw MiniMax response and its finish metadata before another
+retry, then contract the smallest response-extraction or request-format fix.
+Do not guess whether the response is prose, reasoning-only, or another API
+message field from the current error alone.
+
 Use this format for a divergence:
 
 ```text

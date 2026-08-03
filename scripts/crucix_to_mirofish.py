@@ -892,40 +892,21 @@ PRESERVED SIMULATION REPORT:
 def _request_scenario_repair(prompt):
     backends = [
         (
-            "local",
-            LLAMA_SWAP_URL,
-            None,
-            os.getenv("SCENARIO_REPAIR_MODEL", "writer-qwen3.6-27b"),
+            "primary",
+            LLM_BASE_URL,
+            os.getenv("LLM_API_KEY"),
+            os.getenv("LLM_MODEL_NAME", "MiniMax-M3"),
         ),
     ]
-    if os.getenv("SCENARIO_REPAIR_ALLOW_REMOTE", "").lower() == "true":
-        backends.extend([
-            (
-                "boost",
-                LLM_BOOST_BASE_URL,
-                os.getenv("LLM_BOOST_API_KEY"),
-                os.getenv("LLM_BOOST_MODEL_NAME", "kimi-k2.6"),
-            ),
-            (
-                "primary",
-                LLM_BASE_URL,
-                os.getenv("LLM_API_KEY"),
-                os.getenv("LLM_MODEL_NAME", "MiniMax-M3"),
-            ),
-        ])
     errors = []
     for label, base_url, key, model in backends:
-        if label != "local" and not key:
+        if not key:
             continue
         try:
             headers = {"Content-Type": "application/json"}
             if key:
                 headers["Authorization"] = f"Bearer {key}"
-            endpoint = (
-                f"{base_url.rstrip('/')}/v1/chat/completions"
-                if label == "local"
-                else f"{base_url.rstrip('/')}/chat/completions"
-            )
+            endpoint = f"{base_url.rstrip('/')}/chat/completions"
             response = _session.post(
                 endpoint,
                 headers=headers,
@@ -941,7 +922,7 @@ def _request_scenario_repair(prompt):
                         },
                         {"role": "user", "content": prompt},
                     ],
-                    "temperature": 1 if "kimi" in model.lower() else 0.1,
+                    "temperature": 0.1,
                     "max_tokens": 3000,
                 },
                 timeout=300,
