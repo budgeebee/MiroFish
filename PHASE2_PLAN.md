@@ -1362,6 +1362,70 @@ final JSON, or use a documented way to suppress/reduce reasoning if MiniMax M3
 supports it. Verify the chosen parameter with a minimal probe before one more
 checkpoint retry.
 
+### A11 — 2026-08-03 — P2-M3: expand M3 budget and request minimal reasoning
+
+Reality:
+The user authorized a larger completion budget and asked to disable thinking.
+MiniMax documentation does not expose a supported M-series thinking-off switch:
+`reasoning_split` separates reasoning, while Anthropic-compatible `thinking`
+controls are documented as ignored. A minimal probe instead combined explicit
+"simple formatting; no deep analysis; return final JSON immediately" guidance
+with `max_completion_tokens=8192` and retained `reasoning_split=true`. It
+returned HTTP 200, `finish_reason=stop`, valid JSON content, 75 reasoning
+characters, and only 26 completion tokens.
+
+Decision class:
+User-approved amendment to A10's M3 request budget/prompt.
+
+Impact:
+Increase the production repair budget from 2,048 to 8,192 tokens and prepend
+the verified simple-formatting/minimal-reasoning instruction to the strict raw
+JSON system prompt. Keep temperature `1`, separated reasoning, sanitized
+diagnostics, model routing, two-attempt semantic validator, and fail-closed
+publication unchanged. Update the deterministic request fixture, then permit
+one checkpoint resume.
+
+Executor action:
+Apply and locally verify the exact probed settings, then resume the existing
+completed checkpoint once. If publication succeeds, run MiroFish live gates;
+if it fails, record the sanitized result and halt.
+
+Planner/user resolution required:
+Resolved by the user's explicit budget/minimal-thinking request and successful
+8,192-token live probe.
+
+### A12 — 2026-08-03 — P2-M3: larger M3 budget scales reasoning without final content
+
+Reality:
+The A11 settings passed local verification and the single checkpoint resume
+launched PID 175 against cached `sim_e539fd57be89` / `report_48529846ff56`.
+MiniMax M3 again returned HTTP-success with `finish_reason=length`, no content,
+one reasoning block, and no sensitivity flag. At the 8,192-token budget it
+produced 32,277 reasoning characters—approximately four times A10's 7,901
+characters at 2,048 tokens—without reaching final JSON. The explicit
+simple-formatting/no-deep-analysis instruction did not suppress reasoning.
+
+Decision class:
+LOCKED under A11. Its one checkpoint resume is exhausted.
+
+Impact:
+Increasing the budget does not solve this full-prompt M3 behavior; it increases
+latency/cost while the model fills the new budget with reasoning. P2-M3 and
+Phase 2 remain open. Leaving the 8,192 setting active would expose the next
+automatic checkpoint resume to the same higher cost.
+
+Executor action:
+Reverted the experimental budget/prompt delta to the prior committed strict-M3
+configuration while retaining sanitized diagnostics and this audit. Did not
+issue another resume, change models, relax validation, restart infrastructure,
+mutate output, or write another repository.
+
+Planner/user resolution required:
+Do not increase M3's completion budget again without a documented reasoning
+control. Choose a backend/mode that enforces final structured output (the probed
+Kimi K3 JSON-object mode is one verified option), or materially redesign the
+repair task/prompt under a new contract.
+
 Use this format for a divergence:
 
 ```text
