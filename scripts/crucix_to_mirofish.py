@@ -959,8 +959,6 @@ def _request_scenario_repair(prompt):
     ]
     errors = []
     for label, base_url, key, model in backends:
-        if not key:
-            continue
         try:
             headers = {"Content-Type": "application/json"}
             if key:

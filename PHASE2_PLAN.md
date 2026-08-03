@@ -1002,9 +1002,62 @@ No live pipeline, service, timer, API, permission, historical output, or other
 repository was changed. P2-M3 was not started.
 ```
 
-### P2-M3 — pending
+### P2-M3 — 2026-08-03 — MIROFISH PASS; DOWNSTREAM CAPTURE PENDING
 
-Executor appends real output here.
+```text
+Repair implementation:
+  - Routed constrained repair through local ai_backend using
+    deepseek-v4-flash, thinking disabled, JSON-object mode, and 8192 output
+    tokens. The provider credential remains inside ai_backend.
+  - Forwarded the allowlisted DeepSeek controls in ai_backend commit cda1dfa.
+  - Added keyless private-gateway routing and the explicit
+    http://host.docker.internal:9400 container URL.
+
+Checkpoint resume:
+  PID 15 reused sim_e539fd57be89 / report_48529846ff56.
+  Both allowed semantic repair attempts returned JSON through ai_backend; the
+  second passed unchanged strict validation.
+  Published report_id=prediction_20260803_130651.
+  Checkpoint cleared; no pipeline process remains.
+
+python3 scripts/verify_daily_freshness.py --live
+  {"checkpoint_current": false, "directional_abstentions": 15,
+  "directional_pairs": 15, "granular_polymarket_observations": 10,
+  "pipeline_running": false, "report_date": "20260803",
+  "report_id": "prediction_20260803_130651",
+  "report_size_bytes": 39665, "source_age_seconds": 141, "status": "ok"}
+
+python3 scripts/verify_pipeline_contract.py
+  PASS: zero-byte, undersized, invalid UTF-8, partial, valid, atomic-write,
+  stale/current checkpoint, idempotent skip, observation provenance, granular
+  Polymarket identity/deduplication, aggregate-citation rejection, signed
+  market directions, abstention, invalid-type rejection, ordered pairing,
+  ai_backend DeepSeek JSON repair, sanitized response diagnostics, repair
+  retry, scenario synthesis, schema rejection, and artifact endpoint fixtures
+  CP0 bundle: /tmp/mirofish-p1-m3-cp0
+
+python3 scripts/verify_daily_freshness.py --fixture
+  {"checkpoint_current": false, "directional_abstentions": 1,
+  "directional_pairs": 2, "fixture": true,
+  "granular_polymarket_observations": 2, "pipeline_running": false,
+  "report_date": "20260727", "report_id": "prediction_20260727_000500",
+  "report_size_bytes": 4096, "source_age_seconds": 600, "status": "ok"}
+
+systemd:
+  mirofish-daily.timer loaded, enabled, active (waiting)
+  next MiroFish run: 2026-08-03 21:05 PDT
+  next trading-intelligence snapshot: 2026-08-03 22:07 PDT
+
+Current downstream status (expected pending before capture):
+  {"first_report_id":"prediction_20260802_005827",
+  "last_report_id":"prediction_20260802_044807",
+  "schema":"mirofish-snapshot.v1","snapshots":2,"total_hypotheses":6}
+
+Remaining gate:
+  After the scheduled 22:07 PDT capture, require trading-intelligence
+  last_report_id=prediction_20260803_130651. Then update the three closeout
+  docs, mark P2-M3 complete, and make the contracted final closeout commit.
+```
 
 ## Cross-session handoffs
 
@@ -1039,6 +1092,19 @@ Executor appends real output here.
   and one complete hypothesis/contract pair and reports pair/abstention counts.
 - Wait for the first naturally scheduled 21:05 America/Tijuana report generated
   after P2-M2. Do not trigger an extra run or change runtime infrastructure.
+
+### P2-M3 repair to downstream capture executor — 2026-08-03
+
+- MiroFish live publication now passes as `prediction_20260803_130651`: 10
+  exact Polymarket observations, 15 directional pairs, and 15 abstentions.
+- The strict live, deterministic, fixture, process/checkpoint, and timer gates
+  passed. Do not run or resume MiroFish again.
+- P2-M3 remains open only because the external 22:07 PDT trading-intelligence
+  snapshot has not run yet. After that window, read its status and require
+  `last_report_id=prediction_20260803_130651`; do not write that repository.
+- If it matches, update only `PHASE2_PLAN.md`, `TODO.md`, and `CLAUDE.md`, then
+  make the original closeout commit. If it does not, record the external
+  handoff/blocker and halt.
 
 ## Amendments
 
@@ -1498,6 +1564,33 @@ Amend the MiroFish caller to allow an empty optional `AI_BACKEND_API_KEY`, set
 the `mirofish-api` container's `AI_BACKEND_URL` to
 `http://host.docker.internal:9400`, add a deterministic no-key fixture, and
 permit one more checkpoint resume.
+
+### A15 — 2026-08-03 — P2-M3: authorize keyless container gateway repair
+
+Reality:
+The user explicitly authorized the exact A14 repair. Local `ai_backend` permits
+private-network callers without `X-API-Key`, and the MiroFish API container
+already maps `host.docker.internal` to the host gateway.
+
+Decision class:
+User-approved amendment to A14's caller configuration boundary.
+
+Impact:
+Remove the obsolete empty-key skip from the single-backend scenario-repair
+loop, while continuing to send `X-API-Key` when configured. Set only the
+`mirofish-api` service's `AI_BACKEND_URL` to
+`http://host.docker.internal:9400`. Update the deterministic fixture to prove a
+keyless request is sent without either authentication header. Recreate only
+`mirofish-api` to apply the environment change, verify gateway health from the
+container, and permit exactly one `/resume` against the existing checkpoint.
+
+Executor action:
+Apply and verify the exact repair, recreate only `mirofish-api`, then perform
+one checkpoint resume. If publication succeeds, run the original M3 live
+gates; if it fails, record the exact result and halt.
+
+Planner/user resolution required:
+Resolved by the user's explicit “yes fix” authorization.
 
 Use this format for a divergence:
 

@@ -72,6 +72,7 @@ services:
       - INSIDER_CAPITOL_URL=http://host.docker.internal:9700
       - NEWS_AGGREGATOR_URL=http://news-aggregator:8000
       - LLAMA_SWAP_URL=http://host.docker.internal:8090
+      - AI_BACKEND_URL=http://host.docker.internal:9400
       - GRAPHITI_URL=http://graphiti_api:8000
     ports:
       - "5010:5010"

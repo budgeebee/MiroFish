@@ -426,13 +426,13 @@ def scenario_repair_backend_fixture():
 
     diagnostic_error = ""
     try:
+        os.environ.pop("AI_BACKEND_API_KEY", None)
         pipeline._session = FixtureSession({
             "provider": "deepseek",
             "model": "deepseek-v4-flash",
             "task": "chat",
             "result": {"text": '{"fixture":true}'},
         })
-        os.environ["AI_BACKEND_API_KEY"] = "fixture-gateway-key"
         content = pipeline._request_scenario_repair("fixture prompt")
         pipeline._session = FixtureSession({
             "provider": "deepseek",
@@ -466,7 +466,7 @@ def scenario_repair_backend_fixture():
     body = request["json"]
     repair_metadata = body["metadata"]
     check(
-        request["headers"].get("X-API-Key") == "fixture-gateway-key"
+        "X-API-Key" not in request["headers"]
         and "Authorization" not in request["headers"]
         and body["provider"] == "deepseek"
         and body["task"] == "chat"
@@ -492,7 +492,7 @@ def scenario_repair_backend_fixture():
         and '"result_text_type": "NoneType"' in diagnostic_error
         and "private-prompt-fixture" not in diagnostic_error
         and "private-reasoning-fixture" not in diagnostic_error
-        and "fixture-gateway-key" not in diagnostic_error,
+        and "X-API-Key" not in diagnostic_error,
         "DeepSeek response diagnostics are incomplete or leaked protected content",
     )
 
