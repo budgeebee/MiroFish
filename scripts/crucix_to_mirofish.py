@@ -62,6 +62,7 @@ KALSHI_JOURNAL = Path(os.getenv(
 LLAMA_SWAP_URL = os.getenv("LLAMA_SWAP_URL", "http://localhost:8090")
 LLM_BOOST_BASE_URL = os.getenv("LLM_BOOST_BASE_URL", "https://api.moonshot.ai/v1")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.minimax.io/v1")
+AI_BACKEND_URL = os.getenv("AI_BACKEND_URL", "http://localhost:9400")
 SCHWALPACA_API_KEY = os.getenv("SCHWALPACA_API_KEY", "")
 REPORT_MIN_BYTES = 1000
 OBSERVATION_STATUSES = {"ok", "degraded", "unavailable", "error", "timeout"}
@@ -901,6 +902,9 @@ def _scenario_response_metadata(payload):
     reasoning_content = message.get("reasoning_content")
     reasoning_details = message.get("reasoning_details")
     base_resp = payload.get("base_resp")
+    result = payload.get("result")
+    result = result if isinstance(result, dict) else {}
+    result_text = result.get("text")
     base_status = {}
     if isinstance(base_resp, dict):
         base_status = {
@@ -931,16 +935,26 @@ def _scenario_response_metadata(payload):
         "usage_keys": sorted(payload.get("usage", {}))
         if isinstance(payload.get("usage"), dict)
         else [],
+        "provider": payload.get("provider"),
+        "task": payload.get("task"),
+        "result_keys": sorted(result),
+        "result_text_type": type(result_text).__name__,
+        "result_text_length": len(result_text)
+        if isinstance(result_text, str)
+        else None,
+        "result_text_has_object": "{" in result_text
+        if isinstance(result_text, str)
+        else False,
     }
 
 
 def _request_scenario_repair(prompt):
     backends = [
         (
-            "primary",
-            LLM_BASE_URL,
-            os.getenv("LLM_API_KEY"),
-            os.getenv("LLM_MODEL_NAME", "MiniMax-M3"),
+            "ai_backend",
+            AI_BACKEND_URL,
+            os.getenv("AI_BACKEND_API_KEY"),
+            "deepseek-v4-flash",
         ),
     ]
     errors = []
@@ -950,14 +964,15 @@ def _request_scenario_repair(prompt):
         try:
             headers = {"Content-Type": "application/json"}
             if key:
-                headers["Authorization"] = f"Bearer {key}"
-            endpoint = f"{base_url.rstrip('/')}/chat/completions"
+                headers["X-API-Key"] = key
+            endpoint = f"{base_url.rstrip('/')}/callAI"
             response = _session.post(
                 endpoint,
                 headers=headers,
                 json={
-                    "model": model,
-                    "messages": [
+                    "provider": "deepseek",
+                    "task": "chat",
+                    "prompt": [
                         {
                             "role": "system",
                             "content": (
@@ -970,19 +985,21 @@ def _request_scenario_repair(prompt):
                         },
                         {"role": "user", "content": prompt},
                     ],
-                    "temperature": 1,
-                    "max_completion_tokens": 2048,
-                    "reasoning_split": True,
+                    "metadata": {
+                        "model": model,
+                        "max_tokens": 8192,
+                        "response_format": {"type": "json_object"},
+                        "thinking": {"type": "disabled"},
+                        "no_legacy": True,
+                    },
                 },
                 timeout=300,
             )
             response.raise_for_status()
             payload = response.json()
             metadata = _scenario_response_metadata(payload)
-            choices = payload.get("choices") if isinstance(payload, dict) else None
-            choice = choices[0] if isinstance(choices, list) and choices else None
-            message = choice.get("message") if isinstance(choice, dict) else None
-            content = message.get("content") if isinstance(message, dict) else None
+            result = payload.get("result") if isinstance(payload, dict) else None
+            content = result.get("text") if isinstance(result, dict) else None
             if not isinstance(content, str) or not content.strip() or "{" not in content:
                 raise ValueError(
                     "scenario repair response has no JSON object; metadata="

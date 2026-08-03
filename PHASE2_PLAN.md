@@ -1426,6 +1426,79 @@ control. Choose a backend/mode that enforces final structured output (the probed
 Kimi K3 JSON-object mode is one verified option), or materially redesign the
 repair task/prompt under a new contract.
 
+### A13 — 2026-08-03 — P2-M3: route non-thinking DeepSeek Flash through ai_backend
+
+Reality:
+The user selected DeepSeek V4 Flash, then clarified that provider access must
+go through the shared local `ai_backend` gateway rather than a direct DeepSeek
+credential. The gateway is healthy and advertises `deepseek-v4-flash`, but its
+DeepSeek adapter accepted metadata without forwarding `max_tokens`,
+`response_format`, or `thinking`. DeepSeek's current API documents all three
+controls and defaults thinking to enabled. A no-network adapter fixture now
+proves forwarding, and a minimal live `/callAI` probe returned
+`{"value": 1}` with no reasoning content using thinking disabled and JSON-object
+mode.
+
+Decision class:
+User-approved amendment to A12's repair backend and request contract.
+
+Impact:
+Route only constrained scenario repair through `http://localhost:9400/callAI`
+(or `AI_BACKEND_URL`) with provider `deepseek`, model
+`deepseek-v4-flash`, `max_tokens=8192`,
+`response_format={"type":"json_object"}`, and
+`thinking={"type":"disabled"}`. Forward these allowlisted fields in
+`ai_backend/app/services/deepseek_service.py`; keep the provider credential in
+the gateway. Preserve the strict prompt, two-attempt semantic validator,
+fail-closed publication, and sanitized no-content diagnostics. Permit exactly
+one `/resume` against the existing completed checkpoint; do not start a new
+simulation.
+
+Executor action:
+Apply and locally verify the gateway and MiroFish request contracts, then resume
+the existing completed checkpoint once. If publication succeeds, run the
+original M3 live gates. If it fails, record the exact sanitized result and halt.
+Commit the gateway compatibility fix separately in `ai_backend`; do not modify
+any other external-repository files.
+
+Planner/user resolution required:
+Resolved by the user's explicit DeepSeek selection, `ai_backend` routing
+clarification, and request to try it.
+
+### A14 — 2026-08-03 — P2-M3: gateway routing skipped without an API key
+
+Reality:
+The A13 local request contract and gateway adapter fixture passed, and the
+minimal live `ai_backend` probe returned valid JSON with no reasoning content.
+The single authorized checkpoint resume launched PID 190 against cached
+`sim_e539fd57be89` / `report_48529846ff56`, but publication failed before an
+HTTP request was made: `scenario repair has no configured backend`. The repair
+loop skips a backend whenever its key is empty. That behavior was inherited
+from direct provider routing but is wrong for local `ai_backend`, where
+localhost access intentionally requires no client key. The container also
+requires `http://host.docker.internal:9400`, not the host-process default
+`http://localhost:9400`. No report was published; the step-6 checkpoint remains
+current.
+
+Decision class:
+LOCKED under A13. Its one checkpoint resume is exhausted.
+
+Impact:
+DeepSeek V4 Flash itself is not implicated: its thinking-off JSON probe passed.
+The remaining failure is local gateway reachability/configuration in the
+MiroFish caller. P2-M3 and Phase 2 remain open.
+
+Executor action:
+Recorded the exact failure and halted. Did not issue another resume, start a
+simulation, relax validation, mutate output, or write another external
+repository beyond A13's verified `ai_backend` compatibility change.
+
+Planner/user resolution required:
+Amend the MiroFish caller to allow an empty optional `AI_BACKEND_API_KEY`, set
+the `mirofish-api` container's `AI_BACKEND_URL` to
+`http://host.docker.internal:9400`, add a deterministic no-key fixture, and
+permit one more checkpoint resume.
+
 Use this format for a divergence:
 
 ```text

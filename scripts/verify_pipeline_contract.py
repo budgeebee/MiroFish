@@ -404,8 +404,7 @@ def polymarket_selection_fixtures():
 def scenario_repair_backend_fixture():
     calls = []
     original_session = pipeline._session
-    original_key = os.environ.get("LLM_API_KEY")
-    original_model = os.environ.get("LLM_MODEL_NAME")
+    original_key = os.environ.get("AI_BACKEND_API_KEY")
 
     class FixtureResponse:
         def __init__(self, payload):
@@ -428,84 +427,73 @@ def scenario_repair_backend_fixture():
     diagnostic_error = ""
     try:
         pipeline._session = FixtureSession({
-            "model": "MiniMax-M3",
-            "choices": [{
-                "finish_reason": "stop",
-                "message": {"content": '{"fixture":true}'},
-            }],
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "task": "chat",
+            "result": {"text": '{"fixture":true}'},
         })
-        os.environ["LLM_API_KEY"] = "fixture-primary-key"
-        os.environ["LLM_MODEL_NAME"] = "MiniMax-M3"
+        os.environ["AI_BACKEND_API_KEY"] = "fixture-gateway-key"
         content = pipeline._request_scenario_repair("fixture prompt")
         pipeline._session = FixtureSession({
-            "model": "MiniMax-M3",
-            "choices": [{
-                "finish_reason": "stop",
-                "message": {
-                    "reasoning_content": "private-reasoning-fixture",
-                    "reasoning_details": [{"text": "private-detail-fixture"}],
-                },
-            }],
-            "base_resp": {"status_code": 0, "status_msg": "success"},
-            "usage": {"completion_tokens": 12},
-            "output_sensitive": False,
-            "output_sensitive_type": 0,
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "task": "chat",
+            "result": {"text": None, "reasoning": "private-reasoning-fixture"},
         })
         try:
             pipeline._request_scenario_repair("private-prompt-fixture")
         except ValueError as error:
             diagnostic_error = str(error)
         else:
-            raise AssertionError("missing MiniMax content was accepted")
+            raise AssertionError("missing DeepSeek content was accepted")
     finally:
         pipeline._session = original_session
         if original_key is None:
-            os.environ.pop("LLM_API_KEY", None)
+            os.environ.pop("AI_BACKEND_API_KEY", None)
         else:
-            os.environ["LLM_API_KEY"] = original_key
-        if original_model is None:
-            os.environ.pop("LLM_MODEL_NAME", None)
-        else:
-            os.environ["LLM_MODEL_NAME"] = original_model
+            os.environ["AI_BACKEND_API_KEY"] = original_key
 
-    check(content == '{"fixture":true}', "MiniMax repair response changed")
+    check(content == '{"fixture":true}', "DeepSeek repair response changed")
     check(len(calls) == 2, "scenario repair did not use exactly one backend per call")
     endpoint, request = calls[0]
     check(
-        endpoint == f"{pipeline.LLM_BASE_URL.rstrip('/')}/chat/completions"
+        endpoint == f"{pipeline.AI_BACKEND_URL.rstrip('/')}/callAI"
         and endpoint != f"{pipeline.LLAMA_SWAP_URL.rstrip('/')}/v1/chat/completions"
+        and endpoint != f"{pipeline.LLM_BASE_URL.rstrip('/')}/chat/completions"
         and endpoint != f"{pipeline.LLM_BOOST_BASE_URL.rstrip('/')}/chat/completions",
-        "scenario repair did not route exclusively to the MiniMax API",
+        "scenario repair did not route exclusively through ai_backend",
     )
+    body = request["json"]
+    repair_metadata = body["metadata"]
     check(
-        request["headers"].get("Authorization") == "Bearer fixture-primary-key"
-        and request["json"]["model"] == "MiniMax-M3"
-        and request["json"]["temperature"] == 1
-        and request["json"]["max_completion_tokens"] == 2048
-        and request["json"]["reasoning_split"] is True
-        and "max_tokens" not in request["json"]
-        and "response_format" not in request["json"]
+        request["headers"].get("X-API-Key") == "fixture-gateway-key"
+        and "Authorization" not in request["headers"]
+        and body["provider"] == "deepseek"
+        and body["task"] == "chat"
+        and repair_metadata["model"] == "deepseek-v4-flash"
+        and repair_metadata["max_tokens"] == 8192
+        and repair_metadata["response_format"] == {"type": "json_object"}
+        and repair_metadata["thinking"] == {"type": "disabled"}
+        and repair_metadata["no_legacy"] is True
         and request["timeout"] == 300,
-        "scenario repair lost the configured MiniMax M3 request contract",
+        "scenario repair lost the DeepSeek V4 Flash request contract",
     )
-    system_prompt = request["json"]["messages"][0]["content"]
+    system_prompt = body["prompt"][0]["content"]
     check(
         "raw JSON object only" in system_prompt
         and "must begin with { and end with }" in system_prompt
         and "<think>" in system_prompt,
-        "MiniMax repair lost strict raw-JSON prompting",
+        "DeepSeek repair lost strict raw-JSON prompting",
     )
     check(
         "scenario repair response has no JSON object" in diagnostic_error
-        and '"choice_count": 1' in diagnostic_error
-        and '"finish_reason": "stop"' in diagnostic_error
-        and '"content_type": "NoneType"' in diagnostic_error
-        and '"reasoning_content_length": 25' in diagnostic_error
-        and '"reasoning_details_count": 1' in diagnostic_error
+        and '"provider": "deepseek"' in diagnostic_error
+        and '"result_keys": ["reasoning", "text"]' in diagnostic_error
+        and '"result_text_type": "NoneType"' in diagnostic_error
         and "private-prompt-fixture" not in diagnostic_error
         and "private-reasoning-fixture" not in diagnostic_error
-        and "private-detail-fixture" not in diagnostic_error,
-        "MiniMax response diagnostics are incomplete or leaked protected content",
+        and "fixture-gateway-key" not in diagnostic_error,
+        "DeepSeek response diagnostics are incomplete or leaked protected content",
     )
 
 
@@ -1121,7 +1109,7 @@ def main():
         "stale/current checkpoint, idempotent skip, observation provenance, "
         "granular Polymarket identity/deduplication, aggregate-citation "
         "rejection, signed market directions, abstention, invalid-type "
-        "rejection, ordered pairing, strict MiniMax M3 JSON repair, sanitized "
+        "rejection, ordered pairing, ai_backend DeepSeek JSON repair, sanitized "
         "response diagnostics, repair retry, scenario synthesis, schema "
         "rejection, and artifact endpoint fixtures"
     )
