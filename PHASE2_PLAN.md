@@ -1042,7 +1042,39 @@ Executor appends real output here.
 
 ## Amendments
 
-None.
+### A1 — 2026-08-02 — P2-M3: first scheduled live canary failed publication
+
+Reality:
+The enabled/active timer fired at 21:05 PDT and launched a fresh pipeline after
+P2-M2. At 22:19 PDT the API reported no `20260803` report, no running process,
+and a current checkpoint at completed step 6 updated at 22:08 PDT. The current
+pipeline log shows a completed simulation (`sim_77c000f70603`, report
+`report_e0b9d81f5623`) whose live report omitted the scenario-synthesis marker.
+Both constrained repair attempts used `writer-qwen3.6-27b`; publication then
+failed closed because the second response contained invalid JSON at line 38,
+column 34. API logs also show an external `POST /resume` before this audit; this
+executor did not trigger it. That resume reached the same two-attempt repair
+failure. The 22:07 trading-intelligence capture ran, but its latest snapshot
+remains the prior `prediction_20260802_044807` rather than a new report.
+
+Decision class:
+LOCKED. P2-M3 explicitly stops on failed publication, a current checkpoint, or
+the need for a code change/resume/new run.
+
+Impact:
+The first naturally scheduled post-P2-M2 report does not exist, so live exact
+contract observations, direction pairs, API identity, and downstream capture
+cannot be verified. P2-M3 and Phase 2 remain open.
+
+Executor action:
+Recorded read-only API, systemd, container-log, and downstream snapshot evidence
+and halted. Did not call `/run`, `/resume`, restart a service, modify code or
+runtime infrastructure, mutate output, or write another repository.
+
+Planner/user resolution required:
+Decide whether to amend M3 to permit a targeted repair/retry investigation or
+wait for another naturally scheduled canary. Do not mark Phase 2 complete from
+the prior report.
 
 Use this format for a divergence:
 
