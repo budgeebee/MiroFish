@@ -1203,6 +1203,104 @@ retry, then contract the smallest response-extraction or request-format fix.
 Do not guess whether the response is prose, reasoning-only, or another API
 message field from the current error alone.
 
+### A6 — 2026-08-03 — P2-M3: switch repair to enforced Kimi K3 JSON mode
+
+Reality:
+The user selected Kimi K3 and asked whether it can force JSON. A minimal live
+probe against the already configured Moonshot endpoint used model `kimi-k3`
+with `response_format={"type":"json_object"}` and returned HTTP 200,
+`finish_reason=stop`, and content `{"value": 1}`. This directly proves JSON
+object mode is accepted for this account/model/endpoint combination.
+
+Decision class:
+User-approved amendment to A5's repair backend and request format.
+
+Impact:
+Switch scenario repair exclusively to `LLM_BOOST_BASE_URL` with the configured
+Moonshot key, exact model `kimi-k3`, temperature `1`, and
+`response_format={"type":"json_object"}`. Update the deterministic routing
+fixture to prove those values and absence of local/MiniMax routing. Preserve the
+same prompt, two-attempt semantic validator, and fail-closed publication. After
+local verification, permit exactly one `/resume` against the existing completed
+checkpoint; do not start a new simulation.
+
+Executor action:
+Proceed with the enforced-JSON K3 switch and one checkpoint resume. If
+publication succeeds, run the MiroFish live gates immediately and wait for the
+next authorized downstream snapshot capture before closeout. If publication
+fails, record the exact result and halt.
+
+Planner/user resolution required:
+Resolved by the user's explicit Kimi K3 selection and the successful live
+capability probe.
+
+### A7 — 2026-08-03 — P2-M3: user prefers strict MiniMax M3 configuration
+
+Reality:
+While the A6 Kimi checkpoint worker (PID 130) was still running, the user
+reversed the model choice and asked to try MiniMax M3 with strict prompt
+engineering and the proper model temperature. The executor stopped PID 130
+before changing routing; it published no report, and the step-6 checkpoint
+remains intact. Official MiniMax M-series guidance recommends temperature `1`
+for reasoning models, while A4 used `0.1`; A4 also used deprecated
+`max_tokens` and did not separate reasoning content.
+
+Decision class:
+User-approved replacement of A6 before A6 produced a publication result.
+
+Impact:
+Route repair exclusively to configured MiniMax M3 with temperature `1`,
+`max_completion_tokens=2048`, and `reasoning_split=true`. Strengthen the system
+message to require one raw JSON object beginning with `{` and ending with `}`
+and forbid fences, introductory prose, explanations, chain-of-thought, and
+`<think>` tags. Do not claim API-enforced JSON Schema support, which the
+MiniMax M-series endpoint does not document. Update the deterministic fixture
+for the complete request contract. Preserve the two-attempt semantic validator
+and fail-closed behavior.
+
+Executor action:
+Apply and locally verify the strict MiniMax configuration, then permit exactly
+one checkpoint resume under the user's "let's try" authorization. Do not start
+a new simulation or change the repair contract again in this executor session.
+
+Planner/user resolution required:
+Resolved by the user's strict MiniMax M3 configuration request and retry intent.
+
+### A8 — 2026-08-03 — P2-M3: strict M3 config works in probe but full repair shape differs
+
+Reality:
+The strict M3 request passed deterministic checks and the one A7-authorized
+resume launched PID 145 against cached `sim_e539fd57be89` /
+`report_48529846ff56`. Publication failed before a repair candidate was parsed:
+`scenario repair backends failed: primary: KeyError`. No report was published
+and the step-6 checkpoint remains. A subsequent minimal diagnostic call using
+the exact endpoint, model, temperature `1`, `max_completion_tokens=2048`, and
+`reasoning_split=true` returned HTTP 200, `base_resp.status_code=0`,
+`finish_reason=stop`, message fields including `content` and reasoning fields,
+and a 12-character JSON object. Therefore these settings are accepted and can
+produce JSON; the full production request returned a different structure that
+the current direct indexing obscured.
+
+Decision class:
+LOCKED under A7. Its single checkpoint resume is exhausted; further production
+calls or response-extraction changes require a new amendment.
+
+Impact:
+Strict M3 configuration is retained and local verification passes, but P2-M3
+and Phase 2 remain open. The failure can no longer be attributed simply to
+temperature, deprecated token parameters, or unsupported reasoning separation.
+
+Executor action:
+Recorded the full-repair failure and sanitized diagnostic evidence and halted.
+Did not issue another resume, change models, relax validation, restart
+infrastructure, mutate output, or write another repository.
+
+Planner/user resolution required:
+Instrument `_request_scenario_repair` to report sanitized response keys,
+`base_resp`, finish reason, and content/reasoning lengths on missing fields (and
+optionally save a protected raw failure response), then make one observed retry.
+Do not guess at another M3 configuration change before seeing that evidence.
+
 Use this format for a divergence:
 
 ```text

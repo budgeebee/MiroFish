@@ -435,20 +435,32 @@ def scenario_repair_backend_fixture():
         else:
             os.environ["LLM_MODEL_NAME"] = original_model
 
-    check(content == '{"fixture":true}', "primary repair response changed")
+    check(content == '{"fixture":true}', "MiniMax repair response changed")
     check(len(calls) == 1, "scenario repair did not use exactly one backend")
     endpoint, request = calls[0]
     check(
         endpoint == f"{pipeline.LLM_BASE_URL.rstrip('/')}/chat/completions"
-        and endpoint != f"{pipeline.LLAMA_SWAP_URL.rstrip('/')}/v1/chat/completions",
-        "scenario repair did not route exclusively to the primary API",
+        and endpoint != f"{pipeline.LLAMA_SWAP_URL.rstrip('/')}/v1/chat/completions"
+        and endpoint != f"{pipeline.LLM_BOOST_BASE_URL.rstrip('/')}/chat/completions",
+        "scenario repair did not route exclusively to the MiniMax API",
     )
     check(
         request["headers"].get("Authorization") == "Bearer fixture-primary-key"
         and request["json"]["model"] == "MiniMax-M3"
-        and request["json"]["temperature"] == 0.1
+        and request["json"]["temperature"] == 1
+        and request["json"]["max_completion_tokens"] == 2048
+        and request["json"]["reasoning_split"] is True
+        and "max_tokens" not in request["json"]
+        and "response_format" not in request["json"]
         and request["timeout"] == 300,
         "scenario repair lost the configured MiniMax M3 request contract",
+    )
+    system_prompt = request["json"]["messages"][0]["content"]
+    check(
+        "raw JSON object only" in system_prompt
+        and "must begin with { and end with }" in system_prompt
+        and "<think>" in system_prompt,
+        "MiniMax repair lost strict raw-JSON prompting",
     )
 
 
@@ -1064,7 +1076,7 @@ def main():
         "stale/current checkpoint, idempotent skip, observation provenance, "
         "granular Polymarket identity/deduplication, aggregate-citation "
         "rejection, signed market directions, abstention, invalid-type "
-        "rejection, ordered pairing, MiniMax M3 repair routing, repair retry, "
+        "rejection, ordered pairing, strict MiniMax M3 JSON repair, repair retry, "
         "scenario synthesis, schema rejection, and artifact endpoint fixtures"
     )
     print(f"CP0 bundle: {cp0_dir}")

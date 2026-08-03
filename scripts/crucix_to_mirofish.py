@@ -916,14 +916,18 @@ def _request_scenario_repair(prompt):
                         {
                             "role": "system",
                             "content": (
-                                "You produce compact evidence-linked JSON for "
-                                "local schema validation."
+                                "Return one valid raw JSON object only. Do not "
+                                "include markdown fences, introductory text, "
+                                "explanations, or hidden chain-of-thought. Do "
+                                "not output <think> tags. The entire response "
+                                "must begin with { and end with }."
                             ),
                         },
                         {"role": "user", "content": prompt},
                     ],
-                    "temperature": 0.1,
-                    "max_tokens": 3000,
+                    "temperature": 1,
+                    "max_completion_tokens": 2048,
+                    "reasoning_split": True,
                 },
                 timeout=300,
             )
