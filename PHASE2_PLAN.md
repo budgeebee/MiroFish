@@ -1,6 +1,6 @@
 # MiroFish Phase 2 Plan — Exact Market Attribution and Signed Direction
 
-**Status:** READY FOR EXECUTION
+**Status:** COMPLETE — 2026-08-03
 
 **Planned:** 2026-08-02
 
@@ -10,7 +10,7 @@
 
 **Incoming request:** `REQUEST-trading-intelligence-phase6.md`
 
-**Next milestone:** P2-M3 only
+**Next milestone:** None — Phase 2 is closed
 
 This is the MiroFish Phase 2 plan. The incoming document is a request from
 trading-intelligence Phase 6; it is not itself an implementation contract.
@@ -35,35 +35,36 @@ annotation confound from trading-intelligence's lead/lag experiment.
 
 ## Done means
 
-- [ ] Direct Crucix Polymarket markets shown to MiroFish are represented by
+- [x] Direct Crucix Polymarket markets shown to MiroFish are represented by
       individual `observation.v1` entries whose `source_id` is exactly
       `Crucix/Polymarket/<venueContractId>` and whose `payload_ref` identifies
       the exact source array element.
-- [ ] The selected population is the stable, first-seen union of `top[:10]`
+- [x] The selected population is the stable, first-seen union of `top[:10]`
       followed by `highProbShifts[:5]`, deduplicated by `venueContractId`.
-- [ ] The existing aggregate `Crucix/Polymarket` observation remains in the
+- [x] The existing aggregate `Crucix/Polymarket` observation remains in the
       manifest for whole-source provenance, but a hypothesis may not cite that
       aggregate in `market_observation_ids` when exact contract observations
       exist.
-- [ ] The prompt-visible Observation Reference Index maps each exact contract
+- [x] The prompt-visible Observation Reference Index maps each exact contract
       observation ID to the contract question and YES semantics, so the model
       can select an ID from meaning rather than guess from a hash.
-- [ ] Every `scenario-synthesis.v1` hypothesis contains
+- [x] Every `scenario-synthesis.v1` hypothesis contains
       `market_directions`, a list of exact objects shaped as
       `{"observation_id": "obs-...", "direction": -1|0|1}`.
-- [ ] `market_directions` is complete and ordered for the hypothesis's exact
+- [x] `market_directions` is complete and ordered for the hypothesis's exact
       direct-Polymarket IDs, contains no other observation IDs, and accepts an
       integer `0` as a first-class abstention.
-- [ ] Prompt, extraction, constrained repair, deterministic builder, local
+- [x] Prompt, extraction, constrained repair, deterministic builder, local
       validation, Markdown rendering, fixture bundle, and daily freshness
       verification all enforce the same contract.
-- [ ] No probability, direction confidence, trade recommendation, new API
-      endpoint, permissions change, timer change, or consumer-side annotation
-      is introduced.
-- [ ] The first naturally scheduled post-change live report passes the strict
+- [x] No probability, direction confidence, trade recommendation, new API
+      endpoint, permissions change, or consumer-side annotation is introduced.
+      MiroFish's timer is unchanged; A17 authorizes only the downstream
+      snapshot timer correction from 22:07 to 22:45 PDT.
+- [x] The first naturally scheduled post-change live report passes the strict
       verifier, contains at least one exact Polymarket hypothesis/market pair,
       and is visible verbatim through the existing loopback endpoints.
-- [ ] Phase 2 closeout is recorded in this plan, `TODO.md`, and `CLAUDE.md` with
+- [x] Phase 2 closeout is recorded in this plan, `TODO.md`, and `CLAUDE.md` with
       real command output and the live report ID.
 
 ## Explicitly not in this phase
@@ -830,7 +831,7 @@ Record the divergence in Amendments and halt. Do not mark the phase complete.
 
 - [x] P2-M1 — Exact Polymarket observation identity
 - [x] P2-M2 — Signed hypothesis/contract direction
-- [ ] P2-M3 — Scheduled live canary and closeout
+- [x] P2-M3 — Scheduled live canary and closeout
 
 ## Verify log
 
@@ -1002,7 +1003,7 @@ No live pipeline, service, timer, API, permission, historical output, or other
 repository was changed. P2-M3 was not started.
 ```
 
-### P2-M3 — 2026-08-03 — MIROFISH PASS; DOWNSTREAM CAPTURE PENDING
+### P2-M3 — 2026-08-03 — COMPLETE
 
 ```text
 Repair implementation:
@@ -1053,10 +1054,26 @@ Current downstream status (expected pending before capture):
   "last_report_id":"prediction_20260802_044807",
   "schema":"mirofish-snapshot.v1","snapshots":2,"total_hypotheses":6}
 
-Remaining gate:
-  The scheduled 22:07 PDT capture raced the next natural run and returned
-  no_report. See A16. The current accepted live report is now
-  prediction_20260804_011212; downstream capture remains unresolved.
+Natural canary and final closeout:
+  prediction_20260804_011212 published from the scheduled 21:05 run and
+  passed strict live verification with 10 exact Polymarket observations,
+  9 directional pairs, 6 abstentions, no active process, and no checkpoint.
+  The deterministic contract verifier and fixture freshness verifier pass.
+
+Downstream capture and schedule repair:
+  The user authorized one manual capture plus a schedule delay of at least
+  30 minutes. trading-intelligence commit d6629e8 moved its snapshot timer
+  from 22:07 to 22:45 PDT, installed/reloaded that exact timer, and verified
+  its next trigger and matching source/install hashes. The manual capture
+  returned state='captured' for prediction_20260804_011212 with 3 hypotheses
+  and 68 observations. Final downstream status:
+  {"first_report_id":"prediction_20260802_005827",
+  "last_report_id":"prediction_20260804_011212",
+  "schema":"mirofish-snapshot.v1","snapshots":3,"total_hypotheses":9}
+
+Phase result:
+  All ten Done-means gates pass. P2-M3 and Phase 2 are closed. No Phase 3 is
+  planned in this repository.
 ```
 
 ## Cross-session handoffs
@@ -1099,12 +1116,22 @@ Remaining gate:
   exact Polymarket observations, 15 directional pairs, and 15 abstentions.
 - The strict live, deterministic, fixture, process/checkpoint, and timer gates
   passed. Do not run or resume MiroFish again.
-- P2-M3 remains open only because the external 22:07 PDT trading-intelligence
-  snapshot raced the natural run and returned `no_report`; see A16. Do not
-  write that repository without a new authorization.
+- At this pre-closeout handoff, P2-M3 was open only because the external 22:07
+  PDT trading-intelligence snapshot raced the natural run and returned
+  `no_report`; see A16. A17 records the later authorization and resolution.
 - The natural report `prediction_20260804_011212` now supersedes the earlier
   repair canary and passes strict live verification with 10 exact observations,
   9 directional pairs, and 6 abstentions.
+
+### P2-M3 closeout — 2026-08-03
+
+- User-authorized manual capture banked `prediction_20260804_011212`; the
+  downstream store reports 3 snapshots / 9 hypotheses and an exact matching
+  `last_report_id`.
+- trading-intelligence commit `d6629e8` moves the armed snapshot timer to
+  22:45 PDT, giving 33 minutes of buffer beyond the measured 67-minute run.
+- All MiroFish closeout gates pass. Phase 2 is closed; there is no queued
+  MiroFish Phase 3.
 
 ## Amendments
 
@@ -1627,6 +1654,39 @@ Choose between authorizing one manual snapshot capture now against the already
 published report, or replanning the snapshot schedule/retry policy. If a
 manual capture is authorized and its `last_report_id` becomes
 `prediction_20260804_011212`, run final read-only gates and close Phase 2.
+
+### A17 — 2026-08-03 — P2-M3: manual capture and 22:45 schedule close the race
+
+Reality:
+The user explicitly authorized both remedies: one manual capture of the
+already-published natural report and a recurring delay of 30 minutes or more.
+The manual capture returned `state=captured` for
+`prediction_20260804_011212` with 3 hypotheses and 68 observations. Snapshot
+status then reported 3 snapshots / 9 total hypotheses and an exact matching
+`last_report_id`.
+
+Decision class:
+User-approved amendment resolving A16's external handoff blocker. This
+supersedes the timer/no-other-repository scope wall only for the exact
+trading-intelligence snapshot schedule, contract, test, and documentation
+changes recorded in `d6629e8`; all other scope walls remain locked.
+
+Impact:
+trading-intelligence commit `d6629e8` supersedes its 22:07 snapshot calendar
+with 22:45 America/Tijuana, a 33-minute buffer after the measured end of the
+67-minute MiroFish run. Its 509 tests pass, Ruff is clean, the systemd unit
+verifies, source and installed hashes match, and the armed timer reports the
+new trigger. MiroFish's own 21:05 schedule is unchanged.
+
+Executor action:
+Re-ran all final read-only MiroFish gates. Strict live verification passed for
+`prediction_20260804_011212` with 10 exact observations, 9 directional pairs,
+6 abstentions, no active process, and no current checkpoint. Deterministic and
+fixture verifiers passed. Marked P2-M3 and Phase 2 complete in the three
+contracted documentation files; no implementation file changed.
+
+Planner/user resolution required:
+Resolved. No MiroFish Phase 3 is currently planned.
 
 Use this format for a divergence:
 

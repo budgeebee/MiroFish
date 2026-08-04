@@ -1,6 +1,6 @@
 # MiroFish — Local Configuration
 
-## Current Handoff — 2026-07-27
+## Phase 1 handoff — closed 2026-07-27
 
 Phase 1 is closed. P1-M5 is committed after the first corrected live report.
 
@@ -30,20 +30,27 @@ python3 scripts/verify_pipeline_contract.py
 
 These checks passed.
 
-## Phase 2 handoff — planned 2026-08-02
+## Current handoff — Phase 2 closed 2026-08-03
 
-`PHASE2_PLAN.md` is READY FOR EXECUTION. It contracts the incoming
-trading-intelligence request into three serial milestones:
+`PHASE2_PLAN.md` is COMPLETE. All three serial milestones are committed:
 
 1. P2-M1 — exact per-contract Polymarket observations and prompt-visible
    ID-to-question mapping;
 2. P2-M2 — signed `{-1,0,+1}` direction per exact hypothesis/contract pair;
-3. P2-M3 — the first naturally scheduled live canary and phase closeout.
+3. P2-M3 — natural live canary, downstream capture, and phase closeout.
 
-There are no current user checkpoints. The next executor must read the entire
-plan, claim Lane S, execute P2-M1 only, run its named Verify steps, commit, and
-stop. Do not implement from the request document directly and do not combine
-P2-M1 with signed directions.
+The closing natural report is `prediction_20260804_011212`: strict live
+verification reports 10 granular Polymarket observations, 9 signed direction
+pairs, 6 abstentions, no active pipeline, and no current checkpoint. The
+matching trading-intelligence snapshot is banked (3 snapshots / 9 hypotheses),
+and its armed capture timer now runs at 22:45 PDT after the measured 67-minute
+MiroFish run raced the former 22:07 trigger.
+
+Constrained scenario repair now routes `deepseek-v4-flash` through local
+`ai_backend` with thinking disabled and JSON-object mode; the provider
+credential remains in the gateway. MiroFish's own daily timer remains enabled
+at 21:05 PDT. No Phase 3 is planned; the Planner/Executor workflow is dormant
+here until a new phase is explicitly requested.
 
 ## Phase 2 scope source — 2026-08-02
 
