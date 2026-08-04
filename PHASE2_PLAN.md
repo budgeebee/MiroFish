@@ -1054,9 +1054,9 @@ Current downstream status (expected pending before capture):
   "schema":"mirofish-snapshot.v1","snapshots":2,"total_hypotheses":6}
 
 Remaining gate:
-  After the scheduled 22:07 PDT capture, require trading-intelligence
-  last_report_id=prediction_20260803_130651. Then update the three closeout
-  docs, mark P2-M3 complete, and make the contracted final closeout commit.
+  The scheduled 22:07 PDT capture raced the next natural run and returned
+  no_report. See A16. The current accepted live report is now
+  prediction_20260804_011212; downstream capture remains unresolved.
 ```
 
 ## Cross-session handoffs
@@ -1100,11 +1100,11 @@ Remaining gate:
 - The strict live, deterministic, fixture, process/checkpoint, and timer gates
   passed. Do not run or resume MiroFish again.
 - P2-M3 remains open only because the external 22:07 PDT trading-intelligence
-  snapshot has not run yet. After that window, read its status and require
-  `last_report_id=prediction_20260803_130651`; do not write that repository.
-- If it matches, update only `PHASE2_PLAN.md`, `TODO.md`, and `CLAUDE.md`, then
-  make the original closeout commit. If it does not, record the external
-  handoff/blocker and halt.
+  snapshot raced the natural run and returned `no_report`; see A16. Do not
+  write that repository without a new authorization.
+- The natural report `prediction_20260804_011212` now supersedes the earlier
+  repair canary and passes strict live verification with 10 exact observations,
+  9 directional pairs, and 6 abstentions.
 
 ## Amendments
 
@@ -1591,6 +1591,42 @@ gates; if it fails, record the exact result and halt.
 
 Planner/user resolution required:
 Resolved by the user's explicit “yes fix” authorization.
+
+### A16 — 2026-08-03 — P2-M3: scheduled snapshot raced the natural run
+
+Reality:
+The 21:05 PDT MiroFish timer launched a new natural run because the API's
+report date had advanced to August 4 in its configured Eastern-time reporting
+day. The 22:07 PDT trading-intelligence snapshot timer fired successfully while
+that run was still active, received HTTP 404, and truthfully recorded
+`state=no_report`; its `last_report_id` therefore remains
+`prediction_20260802_044807`. Five minutes later, at 22:12 PDT, MiroFish
+published `prediction_20260804_011212`. Strict live verification passes with
+10 exact Polymarket observations, 9 directional pairs, 6 abstentions, no
+active process, and no checkpoint. The report used the A15 DeepSeek repair
+path successfully on its first constrained attempt.
+
+Decision class:
+LOCKED under the original P2-M3 downstream-capture stop condition. A missing
+automatic capture is an external handoff/blocker, not permission to run or
+alter the collector.
+
+Impact:
+MiroFish itself passed a second, fully natural live canary. Phase 2 remains
+open only because the once-daily downstream capture raced a 67-minute run and
+did not ingest the resulting report. Waiting for the same unchanged schedule
+would repeat the race risk and postpone closeout by another day.
+
+Executor action:
+Recorded the exact timer/service evidence and halted. Did not invoke the
+snapshot capture manually, write trading-intelligence, change either timer,
+launch/resume MiroFish, or mark P2-M3 complete.
+
+Planner/user resolution required:
+Choose between authorizing one manual snapshot capture now against the already
+published report, or replanning the snapshot schedule/retry policy. If a
+manual capture is authorized and its `last_report_id` becomes
+`prediction_20260804_011212`, run final read-only gates and close Phase 2.
 
 Use this format for a divergence:
 
