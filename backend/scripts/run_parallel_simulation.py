@@ -984,53 +984,34 @@ def _get_comment_info(
 def create_model(config: Dict[str, Any], use_boost: bool = False):
     """
     创建LLM模型
-    
-    支持双 LLM 配置，用于并行模拟时提速：
-    - 通用配置：LLM_API_KEY, LLM_BASE_URL, LLM_MODEL_NAME
-    - 加速配置（可选）：LLM_BOOST_API_KEY, LLM_BOOST_BASE_URL, LLM_BOOST_MODEL_NAME
-    
-    如果配置了加速 LLM，并行模拟时可以让不同平台使用不同的 API 服务商，提高并发能力。
-    
+
+    Routes through the OpenAI-shim (see MiroFish/openai-shim/), which translates
+    OpenAI ChatCompletion API to ai_backend /callAI. All actual LLM dispatch is
+    configured by AI_BACKEND_* env vars (set by docker-compose).
+
+    The boost model is used when `use_boost=True` and the boost AI_BACKEND_*
+    vars are set — the shim provider/model is fixed per container; only the
+    `model_type` field differs here. Both paths end up in the same ai_backend;
+    parallel sims with use_boost=True vs use_boost=False simply name different
+    upstream models on the same gateway.
+
     Args:
         config: 模拟配置字典
-        use_boost: 是否使用加速 LLM 配置（如果可用）
+        use_boost: Whether to use the boost model name (AI_BACKEND_BOOST_MODEL)
     """
-    # 检查是否有加速配置
-    boost_api_key = os.environ.get("LLM_BOOST_API_KEY", "")
-    boost_base_url = os.environ.get("LLM_BOOST_BASE_URL", "")
-    boost_model = os.environ.get("LLM_BOOST_MODEL_NAME", "")
-    has_boost_config = bool(boost_api_key)
-    
-    # 根据参数和配置情况选择使用哪个 LLM
-    if use_boost and has_boost_config:
-        # 使用加速配置
-        llm_api_key = boost_api_key
-        llm_base_url = boost_base_url
-        llm_model = boost_model or os.environ.get("LLM_MODEL_NAME", "")
+    base_url = os.environ.get("OPENAI_BASE_URL", "")
+    if not base_url:
+        raise ValueError("OPENAI_BASE_URL not set — docker-compose should set it to the shim")
+
+    if use_boost and os.environ.get("AI_BACKEND_BOOST_MODEL"):
+        llm_model = os.environ["AI_BACKEND_BOOST_MODEL"]
         config_label = "[加速LLM]"
     else:
-        # 使用通用配置
-        llm_api_key = os.environ.get("LLM_API_KEY", "")
-        llm_base_url = os.environ.get("LLM_BASE_URL", "")
-        llm_model = os.environ.get("LLM_MODEL_NAME", "")
+        llm_model = os.environ.get("AI_BACKEND_MODEL") or config.get("llm_model", "gpt-4o-mini")
         config_label = "[通用LLM]"
-    
-    # 如果 .env 中没有模型名，则使用 config 作为备用
-    if not llm_model:
-        llm_model = config.get("llm_model", "gpt-4o-mini")
-    
-    # 设置 camel-ai 所需的环境变量
-    if llm_api_key:
-        os.environ["OPENAI_API_KEY"] = llm_api_key
-    
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise ValueError("缺少 API Key 配置，请在项目根目录 .env 文件中设置 LLM_API_KEY")
-    
-    if llm_base_url:
-        os.environ["OPENAI_API_BASE_URL"] = llm_base_url
-    
-    print(f"{config_label} model={llm_model}, base_url={llm_base_url[:40] if llm_base_url else '默认'}...")
-    
+
+    print(f"{config_label} model={llm_model}, base_url={base_url[:60]}...")
+
     return ModelFactory.create(
         model_platform=ModelPlatformType.OPENAI,
         model_type=llm_model,

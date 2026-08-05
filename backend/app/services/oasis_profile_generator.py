@@ -15,9 +15,8 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from openai import OpenAI
-
 from ..config import Config
+from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, get_locale, set_locale, t
 from .zep_entity_reader import EntityNode, ZepEntityReader
@@ -179,30 +178,24 @@ class OasisProfileGenerator:
     ]
     
     def __init__(
-        self, 
+        self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model_name: Optional[str] = None,
         zep_api_key: Optional[str] = None,
-        graph_id: Optional[str] = None
+        graph_id: Optional[str] = None,
     ):
-        self.api_key = api_key or Config.LLM_API_KEY
-        self.base_url = base_url or Config.LLM_BASE_URL
-        self.model_name = model_name or Config.LLM_MODEL_NAME
-        
-        if not self.api_key:
-            raise ValueError("LLM_API_KEY 未配置")
-        
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
-        
-        # graphiti客户端用于检索丰富上下文
-        self.zep_api_key = zep_api_key or Config.LLM_API_KEY
+        # Legacy params are accepted but ignored — routing is via ai_backend.
+        self.model_name = Config.AI_BACKEND_MODEL
+        self.base_url = Config.AI_BACKEND_URL
+        self.client = LLMClient()
+
+        # graphiti客户端用于检索丰富上下文 (routes through graphiti service
+        # which itself routes via ai_backend — see graphiti/server).
+        self.zep_api_key = zep_api_key or Config.OPENAI_API_KEY or "ai-backend-routed"
         self.zep_client = None
         self.graph_id = graph_id
-        
+
         if self.zep_api_key:
             try:
                 self.zep_client = GraphitiClient(api_key=self.zep_api_key, base_url=Config.GRAPHITI_URL)
@@ -487,23 +480,20 @@ class OasisProfileGenerator:
         
         for attempt in range(max_attempts):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
+                content = self.client.chat(
                     messages=[
                         {"role": "system", "content": self._get_system_prompt(is_individual)},
-                        {"role": "user", "content": prompt}
+                        {"role": "user", "content": prompt},
                     ],
+                    temperature=0.7 - (attempt * 0.1),
+                    max_tokens=8192,
                     response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # 每次重试降低温度
-                    # 不设置max_tokens，让LLM自由发挥
                 )
-                
-                content = response.choices[0].message.content
-                
-                # 检查是否被截断（finish_reason不是'stop'）
-                finish_reason = response.choices[0].finish_reason
-                if finish_reason == 'length':
-                    logger.warning(f"LLM输出被截断 (attempt {attempt+1}), 尝试修复...")
+                if content is None:
+                    raise ValueError("LLM returned no content")
+
+                if content and not content.rstrip().endswith("}") and not content.rstrip().endswith("]"):
+                    logger.warning(f"LLM output looks truncated (attempt {attempt+1}), 尝试修复...")
                     content = self._fix_truncated_json(content)
                 
                 # 尝试解析JSON

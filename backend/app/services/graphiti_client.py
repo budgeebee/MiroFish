@@ -21,7 +21,9 @@ class GraphitiClient:
     """
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
-        self.api_key = api_key or Config.LLM_API_KEY
+        # graphiti service is itself being routed via ai_backend now — the
+        # api_key is opaque from MiroFish's perspective.
+        self.api_key = api_key or Config.OPENAI_API_KEY or "ai-backend-routed"
         # Resolve base_url in this priority:
         #   1. explicit arg
         #   2. GRAPHITI_URL env var

@@ -31,6 +31,12 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+# Sibling transport wrapper around ai_backend /callAI.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ai_backend_client as _ai_backend_client  # noqa: E402
+
+_ai_backend_chat = _ai_backend_client.chat
+
 # Module-level Session — connection pooling, keep-alive, thread-safe.
 # Saves ~1-2s per MiroFish pipeline run vs opening a new TCP+TLS handshake per call.
 _session = requests.Session()
@@ -60,9 +66,12 @@ KALSHI_JOURNAL = Path(os.getenv(
     str(PROJECTS_DIR / "kalshimarket/journal/kalshi-trading-journal.json"),
 ))
 LLAMA_SWAP_URL = os.getenv("LLAMA_SWAP_URL", "http://localhost:8090")
-LLM_BOOST_BASE_URL = os.getenv("LLM_BOOST_BASE_URL", "https://api.moonshot.ai/v1")
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.minimax.io/v1")
 AI_BACKEND_URL = os.getenv("AI_BACKEND_URL", "http://localhost:9400")
+AI_BACKEND_API_KEY = os.getenv("AI_BACKEND_API_KEY", "")
+AI_BACKEND_PROVIDER = os.getenv("AI_BACKEND_PROVIDER", "minimax")
+AI_BACKEND_MODEL = os.getenv("AI_BACKEND_MODEL", "MiniMax-M3")
+AI_BACKEND_BOOST_PROVIDER = os.getenv("AI_BACKEND_BOOST_PROVIDER", "deepseek")
+AI_BACKEND_BOOST_MODEL = os.getenv("AI_BACKEND_BOOST_MODEL", "deepseek-v4-flash")
 SCHWALPACA_API_KEY = os.getenv("SCHWALPACA_API_KEY", "")
 REPORT_MIN_BYTES = 1000
 OBSERVATION_STATUSES = {"ok", "degraded", "unavailable", "error", "timeout"}
@@ -949,82 +958,40 @@ def _scenario_response_metadata(payload):
 
 
 def _request_scenario_repair(prompt):
-    backends = [
-        (
-            "ai_backend",
-            AI_BACKEND_URL,
-            os.getenv("AI_BACKEND_API_KEY"),
-            "deepseek-v4-flash",
-        ),
+    system_msg = (
+        "Return one valid raw JSON object only. Do not "
+        "include markdown fences, introductory text, "
+        "explanations, or hidden chain-of-thought. Do "
+        "not output <think> tags. The entire response "
+        "must begin with { and end with }."
+    )
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": prompt},
     ]
-    errors = []
-    for label, base_url, key, model in backends:
-        try:
-            headers = {"Content-Type": "application/json"}
-            if key:
-                headers["X-API-Key"] = key
-            endpoint = f"{base_url.rstrip('/')}/callAI"
-            response = _session.post(
-                endpoint,
-                headers=headers,
-                json={
-                    "provider": "deepseek",
-                    "task": "chat",
-                    "prompt": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Return one valid raw JSON object only. Do not "
-                                "include markdown fences, introductory text, "
-                                "explanations, or hidden chain-of-thought. Do "
-                                "not output <think> tags. The entire response "
-                                "must begin with { and end with }."
-                            ),
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    "metadata": {
-                        "model": model,
-                        "max_tokens": 8192,
-                        "response_format": {"type": "json_object"},
-                        "thinking": {"type": "disabled"},
-                        "no_legacy": True,
-                    },
-                },
-                timeout=300,
-            )
-            response.raise_for_status()
-            payload = response.json()
-            metadata = _scenario_response_metadata(payload)
-            result = payload.get("result") if isinstance(payload, dict) else None
-            content = result.get("text") if isinstance(result, dict) else None
-            if not isinstance(content, str) or not content.strip() or "{" not in content:
-                raise ValueError(
-                    "scenario repair response has no JSON object; metadata="
-                    + json.dumps(metadata, sort_keys=True)
-                )
-            print(f"  Scenario repair response received from {label} ({model})")
-            return content
-        except requests.HTTPError as error:
-            status = error.response.status_code if error.response is not None else "?"
-            detail = (
-                error.response.text[:240]
-                if error.response is not None
-                else type(error).__name__
-            )
-            errors.append(f"{label}: HTTP {status} {detail}")
-        except (
-            KeyError,
-            TypeError,
-            ValueError,
-            requests.RequestException,
-        ) as error:
-            errors.append(
-                f"{label}: {type(error).__name__}: {str(error)[:1200]}"
-            )
-    if not errors:
-        raise ValueError("scenario repair has no configured backend")
-    raise ValueError("scenario repair backends failed: " + ", ".join(errors))
+    try:
+        content = _ai_backend_chat(
+            messages,
+            provider=AI_BACKEND_BOOST_PROVIDER,
+            model=AI_BACKEND_BOOST_MODEL,
+            base_url=AI_BACKEND_URL,
+            api_key=AI_BACKEND_API_KEY,
+            temperature=0.0,
+            max_tokens=8192,
+            response_format={"type": "json_object"},
+            timeout=300,
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"scenario repair backend failed: {type(exc).__name__}: {str(exc)[:1200]}"
+        ) from exc
+
+    if not content or not content.strip() or "{" not in content:
+        raise ValueError(
+            f"scenario repair response has no JSON object; got {len(content or '')} chars"
+        )
+    print(f"  Scenario repair response received from ai_backend ({AI_BACKEND_BOOST_PROVIDER}/{AI_BACKEND_BOOST_MODEL})")
+    return content
 
 
 def repair_scenario_synthesis(
@@ -3275,43 +3242,29 @@ def translate_report_to_english(report_path: Path) -> None:
         print(f"  English translation saved: {en_path.name} ({len(en_text):,} chars)")
         return
 
-    # Fallback: API (kimi-k2.6 or primary)
-    llm_key = os.environ.get("LLM_BOOST_API_KEY") or os.environ.get("LLM_API_KEY")
-    boost_model = os.environ.get("LLM_BOOST_MODEL_NAME", "kimi-k2.6")
-    primary_key = os.environ.get("LLM_API_KEY")
-    primary_model = os.environ.get("LLM_MODEL_NAME", "MiniMax-M3")
-    if not llm_key:
-        print(f"  No LLM_API_KEY and local failed, skipping translation")
+    # Fallback: ai_backend (boost provider first, then primary)
+    if not AI_BACKEND_URL:
+        print(f"  No AI_BACKEND_URL and local llama-swap failed, skipping translation")
         return
 
-    for label, url, key, model in [
-        ("boost", LLM_BOOST_BASE_URL, llm_key, boost_model),
-        ("primary", LLM_BASE_URL, primary_key, primary_model),
+    for label, provider, model in [
+        ("boost", AI_BACKEND_BOOST_PROVIDER, AI_BACKEND_BOOST_MODEL),
+        ("primary", AI_BACKEND_PROVIDER, AI_BACKEND_MODEL),
     ]:
-        if not key:
-            continue
-        print(f"    trying {label}: {model}...")
+        print(f"    trying {label}: {provider}/{model}...")
         try:
-            req = urllib.request.Request(
-                f"{url}/chat/completions",
-                data=_json.dumps({
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 1,  # kimi requires 1
-                    "max_tokens": 4000,
-                }).encode("utf-8"),
-                headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": "application/json",
-                    "User-Agent": "Mozilla/5.0",
-                },
-                method="POST",
+            en_text = _ai_backend_chat(
+                [{"role": "user", "content": prompt}],
+                provider=provider,
+                model=model,
+                base_url=AI_BACKEND_URL,
+                api_key=AI_BACKEND_API_KEY,
+                temperature=1.0,  # kimi-k2 family requires 1
+                max_tokens=4000,
             )
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = _json.loads(resp.read())
-            en_text = data["choices"][0]["message"]["content"]
-            print(f"    {label} ({model}): {len(en_text)} chars")
-            break
+            if en_text:
+                print(f"    {label} ({provider}/{model}): {len(en_text)} chars")
+                break
         except Exception as e:
             print(f"    {label} failed: {e}")
             continue

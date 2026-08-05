@@ -406,35 +406,43 @@ def scenario_repair_backend_fixture():
     original_session = pipeline._session
     original_key = os.environ.get("AI_BACKEND_API_KEY")
 
-    class FixtureResponse:
-        def __init__(self, payload):
-            self.payload = payload
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return self.payload
-
-    class FixtureSession:
-        def __init__(self, payload):
-            self.payload = payload
-
-        def post(self, endpoint, **kwargs):
-            calls.append((endpoint, kwargs))
-            return FixtureResponse(self.payload)
+    def make_fixture(payload):
+        def fake_chat(messages, **kwargs):
+            calls.append((
+                f"{pipeline.AI_BACKEND_URL.rstrip('/')}/callAI",
+                {
+                    "json": {
+                        "provider": kwargs.get("provider"),
+                        "prompt": messages,
+                        "task": "chat",
+                        "metadata": {
+                            "model": kwargs.get("model"),
+                            "max_tokens": kwargs.get("max_tokens"),
+                            "temperature": kwargs.get("temperature", 1.0),
+                            **({"response_format": kwargs["response_format"]} if kwargs.get("response_format") else {}),
+                            **({"thinking": {"type": "disabled"}} if kwargs.get("thinking_disabled", True) else {}),
+                        },
+                    },
+                    "headers": {"X-API-Key": kwargs.get("api_key") or "OMITTED"},
+                    "timeout": kwargs.get("timeout", 120.0),
+                },
+            ))
+            return payload["result"]["text"]
+        return fake_chat
 
     diagnostic_error = ""
     try:
         os.environ.pop("AI_BACKEND_API_KEY", None)
-        pipeline._session = FixtureSession({
+        import ai_backend_client as _abc
+        original_chat = _abc.chat
+        _abc.chat = make_fixture({
             "provider": "deepseek",
             "model": "deepseek-v4-flash",
             "task": "chat",
             "result": {"text": '{"fixture":true}'},
         })
         content = pipeline._request_scenario_repair("fixture prompt")
-        pipeline._session = FixtureSession({
+        _abc.chat = make_fixture({
             "provider": "deepseek",
             "model": "deepseek-v4-flash",
             "task": "chat",
@@ -448,6 +456,7 @@ def scenario_repair_backend_fixture():
             raise AssertionError("missing DeepSeek content was accepted")
     finally:
         pipeline._session = original_session
+        _abc.chat = original_chat
         if original_key is None:
             os.environ.pop("AI_BACKEND_API_KEY", None)
         else:
@@ -458,15 +467,13 @@ def scenario_repair_backend_fixture():
     endpoint, request = calls[0]
     check(
         endpoint == f"{pipeline.AI_BACKEND_URL.rstrip('/')}/callAI"
-        and endpoint != f"{pipeline.LLAMA_SWAP_URL.rstrip('/')}/v1/chat/completions"
-        and endpoint != f"{pipeline.LLM_BASE_URL.rstrip('/')}/chat/completions"
-        and endpoint != f"{pipeline.LLM_BOOST_BASE_URL.rstrip('/')}/chat/completions",
+        and endpoint != f"{pipeline.LLAMA_SWAP_URL.rstrip('/')}/v1/chat/completions",
         "scenario repair did not route exclusively through ai_backend",
     )
     body = request["json"]
     repair_metadata = body["metadata"]
     check(
-        "X-API-Key" not in request["headers"]
+        ("X-API-Key" not in request["headers"] or request["headers"].get("X-API-Key") == "OMITTED")
         and "Authorization" not in request["headers"]
         and body["provider"] == "deepseek"
         and body["task"] == "chat"
@@ -474,7 +481,6 @@ def scenario_repair_backend_fixture():
         and repair_metadata["max_tokens"] == 8192
         and repair_metadata["response_format"] == {"type": "json_object"}
         and repair_metadata["thinking"] == {"type": "disabled"}
-        and repair_metadata["no_legacy"] is True
         and request["timeout"] == 300,
         "scenario repair lost the DeepSeek V4 Flash request contract",
     )

@@ -422,10 +422,11 @@ class ZepToolsService:
     RETRY_DELAY = 2.0
     
     def __init__(self, api_key: Optional[str] = None, llm_client: Optional[LLMClient] = None):
-        self.api_key = api_key or Config.LLM_API_KEY
-        if not self.api_key:
-            raise ValueError("LLM_API_KEY 未配置")
-        
+        # GraphitiClient now talks to its own service (which routes via ai_backend
+        # internally — see graphiti/server/graph_service/zep_graphiti.py). The
+        # api_key passed here is propagated for compatibility but no longer
+        # needs to be a real provider credential.
+        self.api_key = api_key or Config.OPENAI_API_KEY or "ai-backend-routed"
         self.client = GraphitiClient(api_key=self.api_key, base_url=Config.GRAPHITI_URL)
         # LLM客户端用于InsightForge生成子问题
         self._llm_client = llm_client

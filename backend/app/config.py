@@ -27,15 +27,23 @@ class Config:
     # JSON配置 - 禁用ASCII转义，让中文直接显示（而不是 \uXXXX 格式）
     JSON_AS_ASCII = False
 
-    # LLM配置（统一使用OpenAI格式）
-    LLM_API_KEY = os.environ.get('LLM_API_KEY')
-    LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
-    LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    # AI backend (single transport for all LLM calls)
+    AI_BACKEND_URL = os.environ.get('AI_BACKEND_URL', 'http://localhost:9400')
+    AI_BACKEND_API_KEY = os.environ.get('AI_BACKEND_API_KEY', '')
 
-    # LLM Boost配置（用于报告生成等 heavier LLM 调用）
-    LLM_BOOST_API_KEY = os.environ.get('LLM_BOOST_API_KEY') or os.environ.get('LLM_API_KEY')
-    LLM_BOOST_BASE_URL = os.environ.get('LLM_BOOST_BASE_URL') or os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
-    LLM_BOOST_MODEL_NAME = os.environ.get('LLM_BOOST_MODEL_NAME') or os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    # Main LLM (default: MiniMax-M3 via ai_backend's minimax provider)
+    AI_BACKEND_PROVIDER = os.environ.get('AI_BACKEND_PROVIDER', 'minimax')
+    AI_BACKEND_MODEL = os.environ.get('AI_BACKEND_MODEL', 'MiniMax-M3')
+
+    # Boost LLM (failover target — default: deepseek-v4-flash for cheaper backstop)
+    AI_BACKEND_BOOST_PROVIDER = os.environ.get('AI_BACKEND_BOOST_PROVIDER', 'deepseek')
+    AI_BACKEND_BOOST_MODEL = os.environ.get('AI_BACKEND_BOOST_MODEL', 'deepseek-v4-flash')
+
+    # camel-oasis simulation engine speaks OpenAI ChatCompletion API. Set
+    # OPENAI_BASE_URL to the local OpenAI-shim service (see docker-compose
+    # `mirofish-openai-shim`) which forwards to ai_backend.
+    OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', '')
+    OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 
     # graphiti (self-hosted Zep replacement) 配置
     GRAPHITI_URL = os.environ.get('GRAPHITI_URL', 'http://localhost:8000')
@@ -75,7 +83,7 @@ class Config:
     def validate(cls) -> list[str]:
         """验证必要配置"""
         errors: list[str] = []
-        if not cls.LLM_API_KEY:
-            errors.append("LLM_API_KEY 未配置")
+        if not cls.AI_BACKEND_URL:
+            errors.append("AI_BACKEND_URL 未配置")
         return errors
 

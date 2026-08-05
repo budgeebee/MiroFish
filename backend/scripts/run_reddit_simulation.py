@@ -430,37 +430,23 @@ class RedditSimulationRunner:
     def _get_db_path(self) -> str:
         """获取数据库路径"""
         return os.path.join(self.simulation_dir, "reddit_simulation.db")
-    
+
     def _create_model(self):
         """
         创建LLM模型
-        
-        统一使用项目根目录 .env 文件中的配置（优先级最高）：
-        - LLM_API_KEY: API密钥
-        - LLM_BASE_URL: API基础URL
-        - LLM_MODEL_NAME: 模型名称
+
+        Routes through the OpenAI-shim (see MiroFish/openai-shim/), which
+        translates OpenAI ChatCompletion to ai_backend /callAI. OPENAI_BASE_URL
+        is set by docker-compose to the shim; ai_backend provider/model are
+        configured via AI_BACKEND_* (also compose-set).
         """
-        # 优先从 .env 读取配置
-        llm_api_key = os.environ.get("LLM_API_KEY", "")
-        llm_base_url = os.environ.get("LLM_BASE_URL", "")
-        llm_model = os.environ.get("LLM_MODEL_NAME", "")
-        
-        # 如果 .env 中没有，则使用 config 作为备用
-        if not llm_model:
-            llm_model = self.config.get("llm_model", "gpt-4o-mini")
-        
-        # 设置 camel-ai 所需的环境变量
-        if llm_api_key:
-            os.environ["OPENAI_API_KEY"] = llm_api_key
-        
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise ValueError("缺少 API Key 配置，请在项目根目录 .env 文件中设置 LLM_API_KEY")
-        
-        if llm_base_url:
-            os.environ["OPENAI_API_BASE_URL"] = llm_base_url
-        
-        print(f"LLM配置: model={llm_model}, base_url={llm_base_url[:40] if llm_base_url else '默认'}...")
-        
+        base_url = os.environ.get("OPENAI_BASE_URL", "")
+        if not base_url:
+            raise ValueError("OPENAI_BASE_URL not set — docker-compose should set it to the shim")
+
+        llm_model = os.environ.get("AI_BACKEND_MODEL") or self.config.get("llm_model", "gpt-4o-mini")
+        print(f"LLM配置: model={llm_model}, base_url={base_url[:60]}...")
+
         return ModelFactory.create(
             model_platform=ModelPlatformType.OPENAI,
             model_type=llm_model,

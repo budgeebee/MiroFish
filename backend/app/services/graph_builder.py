@@ -44,9 +44,9 @@ class GraphBuilderService:
     """
     
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or Config.LLM_API_KEY
+        self.api_key = api_key or Config.OPENAI_API_KEY or "ai-backend-routed"
         if not self.api_key:
-            raise ValueError("LLM_API_KEY 未配置")
+            raise ValueError("OPENAI_API_KEY 未配置")
         
         self.client = GraphitiClient(api_key=self.api_key, base_url=Config.GRAPHITI_URL)
         self.task_manager = TaskManager()

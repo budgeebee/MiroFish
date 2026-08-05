@@ -238,10 +238,10 @@ class ZepGraphMemoryUpdater:
             api_key: LLM API Key（可选，默认从配置读取）
         """
         self.graph_id = graph_id
-        self.api_key = api_key or Config.LLM_API_KEY
-        
+        self.api_key = api_key or Config.OPENAI_API_KEY or "ai-backend-routed"
+
         if not self.api_key:
-            raise ValueError("LLM_API_KEY未配置")
+            raise ValueError("OPENAI_API_KEY未配置")
         
         self.client = GraphitiClient(api_key=self.api_key, base_url=Config.GRAPHITI_URL)
         
