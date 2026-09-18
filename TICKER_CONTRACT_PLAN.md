@@ -89,7 +89,7 @@ it, which can drop the ticker sections entirely.
    *repair* prompt. There are two synthesis paths — the simulation's own
    `## Scenario Synthesis` block (tried first) and the deepseek repair
    (fallback) — so on any night the simulation emitted valid JSON, nothing
-   would have changed. Fixed in `a1c6e07`: the object-shape rule now also sits
+   would have changed. Fixed in `4ea60fd`: the object-shape rule now also sits
    in `SIMULATION_REQUIREMENT`, and `_normalize_affected_entities()` coerces
    both paths' output into `{name, ticker}`, promoting a bare string only on an
    exact basket match and refusing an off-basket ticker. Also fixed from the
