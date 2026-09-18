@@ -1317,8 +1317,10 @@ def insider_capitol_to_markdown(signal: dict) -> str:
         return ""
     lines = []
     n = signal.get("n_new_disclosures", 0)
-    trifecta = signal.get("n_trifecta_flagged", 0)
-    lines.append(f"**{n} new disclosures** ({trifecta} trifecta-flagged) in the last {signal.get('window_days', 3)} days")
+    # trifecta_flag/n_trifecta_flagged are deprecated upstream (always 0/false);
+    # relationship leads replace them.
+    leads = signal.get("n_relationship_leads", 0)
+    lines.append(f"**{n} new disclosures** ({leads} relationship leads) in the last {signal.get('window_days', 3)} days")
     hot = signal.get("hot_sectors", [])
     if hot:
         lines.append(f"\n**Hot sectors** (by dollar volume):")
@@ -1329,15 +1331,29 @@ def insider_capitol_to_markdown(signal: dict) -> str:
     if alpha:
         lines.append(f"\n**Proven alpha members** (beat market significantly):")
         for m in alpha:
-            lines.append(f"- {m['member_name']}: mean AR(90)={m['mean_ar_90']:+.2f}% ({m['n_trades']} trades)")
-    trifecta = signal.get("n_trifecta_flagged", 0)
-    if trifecta:
-        lines.append(f"\n**Trifecta-flagged disclosures** ({trifecta}):")
+            est = m.get("estimate_pct")
+            est_str = f"{est:+.2f}%" if isinstance(est, (int, float)) else "?"
+            ci_low, ci_high = m.get("ci_low_pct"), m.get("ci_high_pct")
+            if isinstance(ci_low, (int, float)) and isinstance(ci_high, (int, float)):
+                est_str += f" (CI {ci_low:+.2f}..{ci_high:+.2f})"
+            lines.append(
+                f"- {m.get('member_name', '?')}: excess return={est_str} "
+                f"({m.get('n_clusters', '?')} trade clusters)"
+            )
+    if leads:
+        lines.append(f"\n**Relationship-lead disclosures** ({leads}):")
         for t in signal.get("new_disclosures", []):
-            if t.get("trifecta_flag"):
-                amt = t.get("amount_mid", "")
-                amt_str = f" ${amt:,.0f}" if amt else ""
-                lines.append(f"- {t['member_name']} ({t['chamber']}): **{t['ticker']}** {t['type']}{amt_str} — score {t.get('insider_score', '?')}")
+            if not t.get("relationship_lead"):
+                continue
+            lo, hi = t.get("amount_min"), t.get("amount_max")
+            if isinstance(lo, (int, float)) and isinstance(hi, (int, float)):
+                amt_str = f" ${lo:,.0f}-${hi:,.0f}"
+            else:
+                amt_str = ""
+            lines.append(
+                f"- {t.get('member_name', '?')}: **{t.get('ticker', '?')}** "
+                f"{t.get('transaction_type', '?')}{amt_str}"
+            )
     return "\n".join(lines) if lines else ""
 
 
