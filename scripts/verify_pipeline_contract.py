@@ -434,15 +434,19 @@ def scenario_repair_backend_fixture():
     try:
         os.environ.pop("AI_BACKEND_API_KEY", None)
         import ai_backend_client as _abc
+        # pipeline binds `_ai_backend_chat = _ai_backend_client.chat` at import
+        # time, so patching the module attribute alone intercepts nothing and
+        # the fixtures fall through to real gateway calls.
         original_chat = _abc.chat
-        _abc.chat = make_fixture({
+        original_bound_chat = pipeline._ai_backend_chat
+        _abc.chat = pipeline._ai_backend_chat = make_fixture({
             "provider": "deepseek",
             "model": "deepseek-v4-flash",
             "task": "chat",
             "result": {"text": '{"fixture":true}'},
         })
         content = pipeline._request_scenario_repair("fixture prompt")
-        _abc.chat = make_fixture({
+        _abc.chat = pipeline._ai_backend_chat = make_fixture({
             "provider": "deepseek",
             "model": "deepseek-v4-flash",
             "task": "chat",
@@ -457,6 +461,7 @@ def scenario_repair_backend_fixture():
     finally:
         pipeline._session = original_session
         _abc.chat = original_chat
+        pipeline._ai_backend_chat = original_bound_chat
         if original_key is None:
             os.environ.pop("AI_BACKEND_API_KEY", None)
         else:
