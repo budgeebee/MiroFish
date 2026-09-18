@@ -85,7 +85,21 @@ it, which can drop the ticker sections entirely.
    object shape and the basket-only rule.
 5. [x] Back-compat: `adapt_mirofish` already handles both shapes; confirm the
    MiroFish-side validator and `verify_pipeline_contract.py` accept objects.
-6. [ ] Verify on the 1am run: hypotheses carry ticker objects, then
+6. [x] Independent review (Kimi, 2026-09-17) found the fix reached only the
+   *repair* prompt. There are two synthesis paths — the simulation's own
+   `## Scenario Synthesis` block (tried first) and the deepseek repair
+   (fallback) — so on any night the simulation emitted valid JSON, nothing
+   would have changed. Fixed in `a1c6e07`: the object-shape rule now also sits
+   in `SIMULATION_REQUIREMENT`, and `_normalize_affected_entities()` coerces
+   both paths' output into `{name, ticker}`, promoting a bare string only on an
+   exact basket match and refusing an off-basket ticker. Also fixed from the
+   same review: relationship-lead rows read `type`/`amount_mid` (the payload has
+   no `transaction_type`/`amount_min`/`amount_max`); the basket walk reads only
+   symbol-ish keys so an `"exchange": "NYSE"` cannot mint a ticker; `--resume`
+   restores the basket from checkpoint state instead of forcing every ticker
+   null; and the fetch log line no longer reports a permanently-zero trifecta
+   count.
+7. [ ] Verify on the 1am run: hypotheses carry ticker objects, then
    `ingest-candidates --source mirofish` maps at least one instrument.
 
 ## Out of scope tonight

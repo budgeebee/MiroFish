@@ -580,7 +580,9 @@ def build_scenario_synthesis(manifest, hypotheses, *, generated_at=None):
             "unknowns": list(draft.get("unknowns", [])),
             "falsifiers": list(draft.get("falsifiers", [])),
             "watch_conditions": list(draft.get("watch_conditions", [])),
-            "affected_entities": list(draft.get("affected_entities", [])),
+            "affected_entities": _normalize_affected_entities(
+                draft.get("affected_entities", [])
+            ),
             "market_observation_ids": resolve(
                 draft,
                 "market_observation_ids",
@@ -770,6 +772,35 @@ def render_observation_reference_index(manifest, source_labels=None) -> str:
     return "\n".join(lines)
 
 
+def _normalize_affected_entities(entities) -> list:
+    """Force `affected_entities` into `{name, ticker}` objects.
+
+    Both synthesis paths — the simulation's own JSON block and the constrained
+    repair — pass through here, so the contract holds even when a model answers
+    with bare strings. A string is promoted to a ticker only on an exact match
+    against the basket the intel layer supplied this run; nothing is ever parsed
+    or guessed out of narrative text. When the basket is empty (a --resume run
+    rebuilds no basket), a model-supplied ticker is passed through unchanged and
+    schwalpaca's instrument lookup remains the backstop.
+    """
+    basket = {symbol.upper() for symbol in TRADABLE_BASKET}
+    out = []
+    for entity in entities or []:
+        if isinstance(entity, dict):
+            name = str(entity.get("name") or entity.get("ticker") or "").strip()
+            ticker = str(entity.get("ticker") or "").strip().upper()
+            if ticker and basket and ticker not in basket:
+                ticker = ""
+        else:
+            name = str(entity or "").strip()
+            candidate = name.upper()
+            ticker = candidate if candidate in basket else ""
+        if not name:
+            continue
+        out.append({"name": name, "ticker": ticker or None})
+    return out
+
+
 def extract_scenario_synthesis(
     report_text,
     manifest,
@@ -825,23 +856,30 @@ def record_basket_symbols(*sources) -> None:
     with a ``symbol`` key, a dict of such lists (the screener bundle), or a
     plain list of symbol strings (held positions).
     """
-    def walk(value):
+    # Only these keys name a security. Walking every short string would let an
+    # unrelated field ("exchange": "NYSE") mint a ticker the model may then use.
+    symbol_keys = ("symbol", "ticker", "etf")
+
+    def walk(value, *, top: bool = False):
         if isinstance(value, dict):
-            if isinstance(value.get("symbol"), str):
-                yield value["symbol"]
-                return
+            for key in symbol_keys:
+                if isinstance(value.get(key), str):
+                    yield value[key]
+                    return
             for item in value.values():
                 yield from walk(item)
         elif isinstance(value, list):
             for item in value:
-                yield from walk(item)
-        elif isinstance(value, str):
+                yield from walk(item, top=top)
+        elif isinstance(value, str) and top:
+            # Bare strings count only from a caller-supplied symbol list
+            # (held positions), never from inside a fetched payload.
             yield value
 
     for source in sources:
         if not source:
             continue
-        for symbol in walk(source):
+        for symbol in walk(source, top=True):
             symbol = symbol.strip().upper()
             # Exchange tickers only: no spaces, no index/option notation.
             if not symbol or not symbol.replace(".", "").replace("-", "").isalnum():
@@ -1348,9 +1386,9 @@ def fetch_insider_capitol_signal() -> dict | None:
         if r.ok:
             data = r.json()
             n = data.get("n_new_disclosures", 0)
-            trifecta = data.get("n_trifecta_flagged", 0)
+            leads = data.get("n_relationship_leads", 0)
             sectors = len(data.get("hot_sectors", []))
-            print(f"  Insider Capitol signal: {n} disclosures ({trifecta} trifecta), {sectors} hot sectors")
+            print(f"  Insider Capitol signal: {n} disclosures ({leads} relationship leads), {sectors} hot sectors")
             return data
         print(f"  Insider Capitol signal HTTP {r.status_code}")
         return None
@@ -1396,14 +1434,11 @@ def insider_capitol_to_markdown(signal: dict) -> str:
         for t in signal.get("new_disclosures", []):
             if not t.get("relationship_lead"):
                 continue
-            lo, hi = t.get("amount_min"), t.get("amount_max")
-            if isinstance(lo, (int, float)) and isinstance(hi, (int, float)):
-                amt_str = f" ${lo:,.0f}-${hi:,.0f}"
-            else:
-                amt_str = ""
+            amt = t.get("amount_mid")
+            amt_str = f" ${amt:,.0f}" if isinstance(amt, (int, float)) else ""
             lines.append(
                 f"- {t.get('member_name', '?')}: **{t.get('ticker', '?')}** "
-                f"{t.get('transaction_type', '?')}{amt_str}"
+                f"{t.get('type', '?')}{amt_str}"
             )
     return "\n".join(lines) if lines else ""
 
@@ -1447,6 +1482,15 @@ Each hypothesis must contain exactly:
 `supporting_observation_ids`, `contradicting_observation_ids`, `unknowns`,
 `falsifiers`, `watch_conditions`, `affected_entities`, and
 `market_observation_ids`, and `market_directions`.
+
+`affected_entities` is a list of objects, each exactly
+`{"name": "<entity as written>", "ticker": "<SYMBOL>" or null}`. Set `ticker`
+only for an exchange-listed security named in the brief's market sections
+(screeners, movers, earnings, held positions), copied exactly as written there.
+Never invent or infer a ticker from a company or sector name. Thematic entities
+— a central bank, a country, a commodity, a sector, a data source — keep
+`"ticker": null` and remain useful context. When a hypothesis concerns listed
+names, name them, so the prediction attaches to instruments, not only a theme.
 
 Use only IDs from the Observation Reference Index. Put market IDs only in
 `market_observation_ids`. Use null horizon boundaries when the evidence does not
@@ -2805,6 +2849,11 @@ def run_pipeline(
         print(f"  project_id:    {state.get('project_id')}")
         print(f"  graph_id:      {state.get('graph_id')}")
         print(f"  simulation_id: {state.get('simulation_id')}")
+        # A resumed run gathers no data, so restore the basket the original run
+        # collected; without it every ticker would be forced null.
+        if not TRADABLE_BASKET:
+            TRADABLE_BASKET.extend(state.get("tradable_basket") or [])
+        print(f"  basket:        {len(TRADABLE_BASKET)} tickers")
     else:
         state = {
             "date": _now().strftime("%Y-%m-%d"),
@@ -2813,6 +2862,7 @@ def run_pipeline(
             "max_rounds": max_rounds,
             "project_name": project_name,
             "manifest_path": manifest_path,
+            "tradable_basket": list(TRADABLE_BASKET),
         }
         completed = 0
 
