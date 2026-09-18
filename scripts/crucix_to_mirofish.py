@@ -74,6 +74,11 @@ AI_BACKEND_BOOST_PROVIDER = os.getenv("AI_BACKEND_BOOST_PROVIDER", "deepseek")
 AI_BACKEND_BOOST_MODEL = os.getenv("AI_BACKEND_BOOST_MODEL", "deepseek-v4-flash")
 SCHWALPACA_API_KEY = os.getenv("SCHWALPACA_API_KEY", "")
 REPORT_MIN_BYTES = 1000
+# Tickers the intel layer put on the table this run (screeners, movers,
+# earnings, held positions). The synthesis prompt allows `affected_entities`
+# tickers only from this list, so hypotheses attach to instruments schwalpaca
+# can actually resolve instead of to free-text entity names.
+TRADABLE_BASKET: list[str] = []
 OBSERVATION_STATUSES = {"ok", "degraded", "unavailable", "error", "timeout"}
 SOURCE_TYPES = {"market", "osint", "news", "macro", "portfolio", "model"}
 EPISTEMIC_STATUSES = {"observed", "inferred", "unknown"}
@@ -813,6 +818,39 @@ def _parse_json_object(text):
     return value
 
 
+def record_basket_symbols(*sources) -> None:
+    """Remember tickers the intel layer surfaced, in first-seen order.
+
+    Accepts the raw payloads already fetched for the brief: a list of dicts
+    with a ``symbol`` key, a dict of such lists (the screener bundle), or a
+    plain list of symbol strings (held positions).
+    """
+    def walk(value):
+        if isinstance(value, dict):
+            if isinstance(value.get("symbol"), str):
+                yield value["symbol"]
+                return
+            for item in value.values():
+                yield from walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from walk(item)
+        elif isinstance(value, str):
+            yield value
+
+    for source in sources:
+        if not source:
+            continue
+        for symbol in walk(source):
+            symbol = symbol.strip().upper()
+            # Exchange tickers only: no spaces, no index/option notation.
+            if not symbol or not symbol.replace(".", "").replace("-", "").isalnum():
+                continue
+            if len(symbol) > 5 or symbol in TRADABLE_BASKET:
+                continue
+            TRADABLE_BASKET.append(symbol)
+
+
 def _scenario_repair_prompt(report_text, brief_text, manifest, feedback=""):
     allowed = [
         {
@@ -859,6 +897,16 @@ timestamp or null), `epistemic_status` (`observed`, `inferred`, or `unknown`),
 `unknowns`, `falsifiers`, `watch_conditions`, `affected_entities`, and
 `market_observation_ids`, and `market_directions`.
 
+`affected_entities` is a list of objects, each exactly
+`{{"name": "<entity as written>", "ticker": "<SYMBOL>" or null}}`.
+Set `ticker` only when the entity is an exchange-listed security that appears
+in the TRADABLE BASKET below, copied exactly. Never invent, infer, or guess a
+ticker from a company or sector name, and never ticker an entity absent from
+the basket. Thematic entities — a central bank, a country, a commodity, a
+sector, a data source — keep `"ticker": null` and remain useful context. When a
+hypothesis concerns basket names, name them, so the prediction attaches to
+instruments rather than to a theme alone.
+
 Use only the exact allowed observation IDs below. Market-derived IDs may appear
 only in `market_observation_ids`; never use market prices as independent
 confirmation. Non-market IDs may appear only in supporting or contradicting
@@ -885,6 +933,9 @@ direction for aggregate Polymarket or any other market source.
 The publisher overwrites `schema_version`, `report_id`, and `generated_at`, but
 include those three top-level fields plus `hypotheses`.
 {retry_note}
+TRADABLE BASKET (the only values allowed in `affected_entities[].ticker`):
+{", ".join(TRADABLE_BASKET) or "(none supplied — every ticker must be null)"}
+
 ALLOWED OBSERVATIONS:
 {json.dumps(allowed, ensure_ascii=False)}
 
@@ -3524,6 +3575,7 @@ def main():
         market_derived=True,
     )
     held_set = set(held_symbols) if held_symbols else set()
+    record_basket_symbols(movers, held_symbols)
     if movers:
         non_held = [m for m in movers if m.get('symbol') not in held_set]
         print(f"  {len(movers)} movers, {len(non_held)} non-held")
@@ -3543,6 +3595,7 @@ def main():
         independence_group="schwalpaca-market-data",
         market_derived=True,
     )
+    record_basket_symbols(screeners)
     if screeners:
         near_high = len(screeners.get("near_52w_high", []))
         unusual_vol = len(screeners.get("unusual_volume", []))
@@ -3772,6 +3825,7 @@ def main():
         independence_group="schwalpaca-market-data",
         market_derived=True,
     )
+    record_basket_symbols(earnings)
     if earnings:
         held_set_for_earnings = set(held_symbols) if held_symbols else set()
         earnings_md = earnings_to_markdown(earnings, held_set_for_earnings)
