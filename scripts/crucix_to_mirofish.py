@@ -775,9 +775,10 @@ def render_observation_reference_index(manifest, source_labels=None) -> str:
 def _normalize_affected_entities(entities) -> list:
     """Force `affected_entities` into `{name, ticker}` objects.
 
-    Both synthesis paths — the simulation's own JSON block and the constrained
-    repair — pass through here, so the contract holds even when a model answers
-    with bare strings. A string is promoted to a ticker only on an exact match
+    Called from all three artifact builders — `extract_scenario_synthesis`
+    (the simulation's own block, tried first), `repair_scenario_synthesis`
+    (the fallback), and `build_scenario_synthesis` — so the contract holds even
+    when a model answers with bare strings. A string is promoted to a ticker only on an exact match
     against the basket the intel layer supplied this run; nothing is ever parsed
     or guessed out of narrative text. When the basket is empty (a --resume run
     rebuilds no basket), a model-supplied ticker is passed through unchanged and
@@ -828,6 +829,11 @@ def extract_scenario_synthesis(
     artifact["schema_version"] = "scenario-synthesis.v1"
     artifact["report_id"] = report_id
     artifact["generated_at"] = _iso_or_none(generated_at)
+    for hypothesis in artifact.get("hypotheses", []):
+        if isinstance(hypothesis, dict):
+            hypothesis["affected_entities"] = _normalize_affected_entities(
+                hypothesis.get("affected_entities", [])
+            )
     validate_scenario_synthesis(artifact, manifest)
     return artifact
 
@@ -1115,6 +1121,9 @@ def repair_scenario_synthesis(
                 if item["market_derived"]
             }
             for hypothesis in artifact.get("hypotheses", []):
+                hypothesis["affected_entities"] = _normalize_affected_entities(
+                    hypothesis.get("affected_entities", [])
+                )
                 misplaced_market_ids = (
                     set(hypothesis.get("supporting_observation_ids", []))
                     | set(hypothesis.get("contradicting_observation_ids", []))
