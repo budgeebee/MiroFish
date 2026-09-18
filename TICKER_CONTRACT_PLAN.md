@@ -1,6 +1,7 @@
 # Ticker Contract: make MiroFish predictions reach the schwalpaca universe
 
-Status: **IN PROGRESS** — started 2026-09-17.
+Status: **AWAITING LIVE VERIFICATION** — steps 1-5 done 2026-09-17 (`1b90b84`,
+`4611bf8`). Step 6 verifies on the 1am run.
 
 ## The problem
 
@@ -76,13 +77,13 @@ it, which can drop the ticker sections entirely.
 1. [x] Fix the `insider_capitol` schema break that crashed every run since
    2026-09-05 (`mean_ar_90` → `estimate_pct`; trifecta → relationship leads).
    Commit `1b90b84`.
-2. [ ] Collect the basket: symbols from screeners, movers, and earnings, into a
+2. [x] Collect the basket: symbols from screeners, movers, and earnings, into a
    module-level list during brief assembly.
-3. [ ] Thread it into `_scenario_repair_prompt` and render a `TRADABLE BASKET`
+3. [x] Thread it into `_scenario_repair_prompt` and render a `TRADABLE BASKET`
    block.
-4. [ ] Rewrite the `affected_entities` paragraph of the prompt to specify the
+4. [x] Rewrite the `affected_entities` paragraph of the prompt to specify the
    object shape and the basket-only rule.
-5. [ ] Back-compat: `adapt_mirofish` already handles both shapes; confirm the
+5. [x] Back-compat: `adapt_mirofish` already handles both shapes; confirm the
    MiroFish-side validator and `verify_pipeline_contract.py` accept objects.
 6. [ ] Verify on the 1am run: hypotheses carry ticker objects, then
    `ingest-candidates --source mirofish` maps at least one instrument.
