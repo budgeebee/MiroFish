@@ -1748,25 +1748,29 @@ def _repair_scenario_with_lab(report_text, brief_text, manifest, *, report_id, g
             artifact["generated_at"] = _iso_or_none(generated_at)
             _normalize_scenario_artifact(artifact, manifest)
             validate_scenario_synthesis(artifact, manifest)
-            if kind == 'legacy_flat':
-                sidecar = _lab.build_sidecar(report_id, artifact["generated_at"], artifact,
-                                             lab_state['feedback'], 'no_proposals',
-                                             ['legacy_flat_scenario'], [])
-            else:
-                try:
-                    sidecar = _sidecar_from_model(value['lab_proposals'], artifact,
-                                                  report_id, artifact["generated_at"], lab_state)
-                except _lab.LabError as exc:
-                    sidecar = _lab.build_sidecar(report_id, artifact["generated_at"], artifact,
-                                                 lab_state['feedback'], 'no_proposals', [str(exc)], [])
-            return artifact, sidecar
         except _lab.LabError as error:
             # The response wrapper itself was unusable; that costs a scenario attempt.
             last_error = error
             feedback = str(error)
+            continue
         except (KeyError, TypeError, ValueError) as error:
             last_error = error
             feedback = str(error)
+            continue
+        # The scenario is validated; sidecar construction below must never
+        # consume another completion call (structural, not reachability).
+        if kind == 'legacy_flat':
+            sidecar = _lab.build_sidecar(report_id, artifact["generated_at"], artifact,
+                                         lab_state['feedback'], 'no_proposals',
+                                         ['legacy_flat_scenario'], [])
+        else:
+            try:
+                sidecar = _sidecar_from_model(value['lab_proposals'], artifact,
+                                              report_id, artifact["generated_at"], lab_state)
+            except _lab.LabError as exc:
+                sidecar = _lab.build_sidecar(report_id, artifact["generated_at"], artifact,
+                                             lab_state['feedback'], 'no_proposals', [str(exc)], [])
+        return artifact, sidecar
     raise ValueError(
         f"scenario repair failed local validation: {last_error}"
     ) from last_error
@@ -1861,6 +1865,13 @@ def _publish_exchange_pair(exchange_dir, report_id, scenario_bytes, sidecar_byte
     root = Path(exchange_dir)
     if root.is_symlink() or not root.is_dir():
         raise _lab.LabError('exchange_directory_unavailable')
+    # One publisher per run (pidfile/run-or-skip); stale pending files are crash orphans.
+    for stale in root.glob('.pending-*'):
+        try:
+            if stale.is_file() and not stale.is_symlink():
+                stale.unlink()
+        except OSError:
+            pass
     _exchange_publish_one(root, f'{report_id}.scenario.json', scenario_bytes, exchange_gid)
     _exchange_publish_one(root, f'{report_id}.lab.json', sidecar_bytes, exchange_gid)
 
@@ -3845,10 +3856,15 @@ def main():
         print("Error: --lab-feedback and --lab-proposals-dir must be supplied together.")
         sys.exit(2)
     if args.lab_feedback:
+        try:
+            exchange_gid = int(os.environ.get("MIROFISH_LAB_EXCHANGE_GID", "1001"))
+        except ValueError:
+            print("Error: MIROFISH_LAB_EXCHANGE_GID must be a numeric group ID.")
+            sys.exit(2)
         lab = {
             "feedback_path": args.lab_feedback,
             "proposals_dir": args.lab_proposals_dir,
-            "exchange_gid": int(os.environ.get("MIROFISH_LAB_EXCHANGE_GID", "1001")),
+            "exchange_gid": exchange_gid,
         }
 
     # Resume mode — skip data gathering, jump straight to pipeline

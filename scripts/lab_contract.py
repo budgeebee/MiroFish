@@ -73,19 +73,21 @@ def canonical_sha256(value):
     return hashlib.sha256(canonical_json(value).encode('utf-8')).hexdigest()
 
 
+def _unique_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise LabError('duplicate_json_key')
+        result[key] = value
+    return result
+
+
 def parse_json(raw):
     """Strict JSON: duplicate keys rejected, finite values only."""
-    def unique_keys(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise LabError('duplicate_json_key')
-            result[key] = value
-        return result
     try:
         if isinstance(raw, (bytes, bytearray)):
             raw = raw.decode('utf-8')
-        value = json.loads(raw, object_pairs_hook=unique_keys)
+        value = json.loads(raw, object_pairs_hook=_unique_keys)
         finite_json(value)
         return value
     except (ValueError, TypeError, RecursionError, UnicodeDecodeError) as exc:
@@ -359,15 +361,8 @@ def extract_lab_proposals(markdown):
         raise LabError('lab_block_trailing_fence')
     # One complete value, then only whitespace: trailing objects are refused.
     stripped = match.group(1).strip()
-    def unique_keys(pairs):
-        result = {}
-        for key, item in pairs:
-            if key in result:
-                raise LabError('duplicate_json_key')
-            result[key] = item
-        return result
     try:
-        value, end = json.JSONDecoder(object_pairs_hook=unique_keys).raw_decode(stripped)
+        value, end = json.JSONDecoder(object_pairs_hook=_unique_keys).raw_decode(stripped)
     except LabError:
         raise
     except (json.JSONDecodeError, RecursionError) as exc:
@@ -393,9 +388,10 @@ def parse_repair_bundle(text):
     fence = re.fullmatch(r'```(?:json)?\s*(\{.*?\})\s*```', stripped, flags=re.DOTALL | re.IGNORECASE)
     if fence:
         stripped = fence.group(1).strip()
-    decoder = json.JSONDecoder()
     try:
-        value, end = decoder.raw_decode(stripped)
+        value, end = json.JSONDecoder(object_pairs_hook=_unique_keys).raw_decode(stripped)
+    except LabError:
+        raise
     except json.JSONDecodeError as exc:
         raise LabError('lab_repair_json_invalid') from exc
     if stripped[end:].strip():

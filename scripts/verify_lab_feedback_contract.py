@@ -334,6 +334,90 @@ def validate_against(artifact, manifest):
     return True
 
 
+def basket_checks():
+    """Claude N1: off-basket tickers nulled; in-basket kept; empty basket passes through."""
+    manifest = _manifest()
+    scenario = FIXTURE['scenario']
+    proposals = FIXTURE['sidecar']['proposals']
+    state = _lab_state(FIXTURE['bootstrap_feedback'])
+    broken_report = 'report body without a usable scenario block\n' + FIXTURE['normal_markdown']
+    mixed = mutate(scenario, lambda v: v['hypotheses'][0].update(affected_entities=[
+        {'name': 'Acme Corp', 'ticker': 'ACME'}, {'name': 'Nvidia', 'ticker': 'NVDA'}]))
+    basket, pipeline.TRADABLE_BASKET = pipeline.TRADABLE_BASKET, ['NVDA', 'AMD']
+    try:
+        artifact, _ = pipeline._repair_scenario_with_lab(
+            broken_report, 'brief', manifest, report_id='prediction_20260920_120000',
+            generated_at='2026-09-20T12:00:00+00:00', lab_state=state,
+            completion_fn=lambda prompt: _wrapper(mixed, proposals))
+        check(artifact['hypotheses'][0]['affected_entities'] == [
+            {'name': 'Acme Corp', 'ticker': None}, {'name': 'Nvidia', 'ticker': 'NVDA'}],
+            'off-basket ticker nulled through the repair path; in-basket kept')
+        pipeline.TRADABLE_BASKET = []
+        artifact, _ = pipeline._repair_scenario_with_lab(
+            broken_report, 'brief', manifest, report_id='prediction_20260920_120000',
+            generated_at='2026-09-20T12:00:00+00:00', lab_state=state,
+            completion_fn=lambda prompt: _wrapper(mixed, proposals))
+        check(artifact['hypotheses'][0]['affected_entities'][0] == {'name': 'Acme Corp', 'ticker': 'ACME'},
+              'empty basket passes a model ticker through unchanged')
+    finally:
+        pipeline.TRADABLE_BASKET = basket
+
+
+def review_resolution_checks():
+    """Claude N2-N5: structural no-extra-call, clean GID refusal, strict repair
+    duplicate keys, stale pending sweep."""
+    manifest = _manifest()
+    scenario = FIXTURE['scenario']
+    proposals = FIXTURE['sidecar']['proposals']
+    state = _lab_state(FIXTURE['bootstrap_feedback'])
+    broken_report = 'report body without a usable scenario block\n' + FIXTURE['normal_markdown']
+
+    # N2: a build_sidecar failure inside the repair loop cannot buy another call.
+    calls = []
+    original_build = lab.build_sidecar
+    def poisoned(*args, **kwargs):
+        raise lab.LabError('synthetic_sidecar_fault')
+    lab.build_sidecar = poisoned
+    try:
+        try:
+            pipeline._repair_scenario_with_lab(
+                broken_report, 'brief', manifest, report_id='prediction_20260920_120000',
+                generated_at='2026-09-20T12:00:00+00:00', lab_state=state,
+                completion_fn=lambda prompt: calls.append(prompt) or json.dumps(scenario))
+            check(False, 'poisoned sidecar construction should surface, not retry')
+        except lab.LabError:
+            check(len(calls) == 1, 'sidecar fault after a valid scenario buys no second call')
+    finally:
+        lab.build_sidecar = original_build
+
+    # N3: a malformed exchange GID exits cleanly, not with a traceback.
+    env = dict(os.environ)
+    env['MIROFISH_LAB_EXCHANGE_GID'] = 'not-a-number'
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / 'scripts/crucix_to_mirofish.py'),
+         '--lab-feedback', '/tmp/x', '--lab-proposals-dir', '/tmp/y'],
+        capture_output=True, text=True, timeout=30, env=env)
+    check(proc.returncode == 2 and 'MIROFISH_LAB_EXCHANGE_GID' in proc.stdout
+          and 'Traceback' not in proc.stdout + proc.stderr,
+          'malformed exchange GID refuses cleanly before any work')
+
+    # N4: duplicate keys inside the repair wrapper are as strict as the normal parser.
+    dup = '{"scenario": {"scenario": 1, "scenario": 2}, "lab_proposals": {}}'
+    check(refuses(lambda: lab.parse_repair_bundle(dup), 'duplicate_json_key'),
+          'duplicate key in repair wrapper refused')
+
+    # N5: stale pending files from a killed publisher are swept before publication.
+    with tempfile.TemporaryDirectory(prefix='m8_pending_') as directory:
+        root = Path(directory)
+        orphan = root / '.pending-orphan'
+        orphan.write_text('x', encoding='utf-8')
+        sidecar = lab.build_sidecar('prediction_20260920_120000', '2026-09-20T12:00:00+00:00',
+                                    scenario, FIXTURE['bootstrap_feedback'], 'ready', [], proposals)
+        payload = (lab.canonical_json(sidecar) + '\n').encode('utf-8')
+        pipeline._publish_exchange_pair(root, 'prediction_20260920_120000', payload, payload, os.getgid())
+        check(not orphan.exists(), 'crash-orphaned pending file swept on next publication')
+
+
 # ---------------------------------------------------------------------------
 # Feedback pinning, resume and launcher configuration
 # ---------------------------------------------------------------------------
@@ -573,7 +657,8 @@ def disabled_mode_checks():
 def main():
     import traceback
     groups = [fixture_identity_checks, feedback_checks, sidecar_checks, extraction_checks,
-              repair_parse_checks, orchestration_checks, disabled_mode_checks, compose_checks]
+              repair_parse_checks, orchestration_checks, basket_checks, review_resolution_checks,
+              disabled_mode_checks, compose_checks]
     for group in groups:
         try:
             group()
