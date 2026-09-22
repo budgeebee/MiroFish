@@ -52,6 +52,32 @@ credential remains in the gateway. MiroFish's own daily timer remains enabled
 at 21:05 PDT. No Phase 3 is planned; the Planner/Executor workflow is dormant
 here until a new phase is explicitly requested.
 
+## Phase 7 (Schwalpaca) — Generator lane, 2026-09-22
+
+> This project runs on the Planner/Executor workflow — see ~/Projects/PLANNING.md.
+
+M8 of `PHASE7_PLAN.md` (in `/home/irvins/Projects/worktrees/schwalpaca-phase6`)
+is implemented on branch `schwalpaca-phase7` in the isolated worktree
+`/home/irvins/Projects/worktrees/mirofish-schwalpaca-phase7`. The canonical
+checkout `/home/irvins/Projects/MiroFish` is **not** edited; it carries an
+uncommitted live translation-model change (`granite4.1-8b` →
+`router-qwen3.5-9b`) that CP7-LOOP/M10 must reconcile (S plan amendment A7-12).
+
+- Lab mode activates only when the trusted launcher supplies both
+  `--lab-feedback PATH` and `--lab-proposals-dir DIR` (configured via
+  `MIROFISH_LAB_FEEDBACK_PATH` / `MIROFISH_LAB_PROPOSALS_DIR` /
+  `MIROFISH_LAB_EXCHANGE_GID` on `mirofish-api`). Neither set → byte-identical
+  legacy prompts, parsers, argv and publication set.
+- `scripts/lab_contract.py` mirrors the frozen Core wire contracts;
+  `fixtures/lab-feedback.json` is byte-identical to the Core fixture
+  (SHA-256 `8a7a936a016f3dbb38553692da28268e2786bb9d6ea726b69b93b41f10cc2a24`).
+- Verify: `python3 scripts/verify_lab_feedback_contract.py` →
+  `ALL LAB FEEDBACK CONTRACT CHECKS PASSED` (95 checks, zero model/network).
+  `python3 scripts/verify_pipeline_contract.py` keeps its pre-existing
+  diagnostics baseline failure signature (measured, not fixed here).
+- Deploying the launcher flags requires rebuilding/recreating the
+  `mirofish-api` image at CP7-LOOP (M10) — staged source only here.
+
 ## Phase 2 scope source — 2026-08-02
 
 `REQUEST-trading-intelligence-phase6.md` (repo root) is an incoming

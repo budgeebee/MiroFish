@@ -226,9 +226,20 @@ def launch(resume=False):
     script = MIROFISH_DIR / "scripts/crucix_to_mirofish.py"
     if not script.exists():
         raise HTTPException(500, f"Pipeline script not found: {script}")
+    # Trusted deployment config only; no request-body/query parameter supplies these.
+    lab_feedback = os.getenv("MIROFISH_LAB_FEEDBACK_PATH")
+    lab_proposals_dir = os.getenv("MIROFISH_LAB_PROPOSALS_DIR")
+    if bool(lab_feedback) != bool(lab_proposals_dir):
+        raise HTTPException(
+            500,
+            "MIROFISH_LAB_FEEDBACK_PATH and MIROFISH_LAB_PROPOSALS_DIR "
+            "must be configured together or not at all",
+        )
     killed = kill_zombie_sims()
     log = OUTPUT_DIR / ".mirofish_run.log"
     cmd = ["python3", str(script), "--max-rounds", "30"]
+    if lab_feedback and lab_proposals_dir:
+        cmd += ["--lab-feedback", lab_feedback, "--lab-proposals-dir", lab_proposals_dir]
     if resume:
         cmd.append("--resume")
     with open(log, "w") as f:

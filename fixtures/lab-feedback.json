@@ -1,0 +1,421 @@
+{
+  "schema": "phase7-generator-fixtures.v1",
+  "synthetic": true,
+  "canonical_json": {
+    "ensure_ascii": true,
+    "sort_keys": true,
+    "separators": [
+      ",",
+      ":"
+    ],
+    "allow_nan": false,
+    "note": "Validate finite JSON before the existing helper; ensure_ascii uses its default true."
+  },
+  "feedback": {
+    "schema": "lab-feedback.v1",
+    "generated_at": "2026-09-20T12:00:00+00:00",
+    "epoch_id": "synthetic-epoch",
+    "ledger_head_sha256": "835d4eaec8eeb30dbfa3002bdd584bd83077e8992f2833cdb57dfd91fd7f3568",
+    "lifetime_trial_count": 5,
+    "proposal_context": {
+      "base_rule_sha256": "becc0699e9ff2f1f4bd2d3aac291eed7494b78fe453034bdc6fe919322e0fc28",
+      "input_manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "evaluation_policy_sha256": "ee0266890f22cc44d91b5a34ab5beb4fc6e2be860facb76e031c290fda2e0d22",
+      "code_commit": "234d796dd439c3de800d2efe062b8f081dcc7286",
+      "admission_closes_at": "2026-09-28T19:35:00+00:00",
+      "admission_state": "open",
+      "allowed_strategy_values": {
+        "selector": [
+          "liquidity",
+          "ranked"
+        ],
+        "name_cap": [
+          10,
+          20,
+          30
+        ],
+        "cost_gate_threshold": [
+          "0.0000",
+          "0.0005",
+          "0.0010"
+        ]
+      },
+      "feature_ids": [
+        "crucix.acled.total_events.v1",
+        "crucix.acled.total_fatalities.v1",
+        "crucix.who.outbreak_items.v1",
+        "crucix.ecb.deposit_rate.v1"
+      ],
+      "frozen_contexts": [
+        {
+          "schema": "context-predicate.v1",
+          "kind": "unconditional"
+        },
+        {
+          "schema": "context-predicate.v1",
+          "kind": "above_discovery_median",
+          "feature_id": "crucix.acled.total_events.v1",
+          "status": "not_testable",
+          "median": null,
+          "usable_discovery_count": 0,
+          "requested_discovery_count": 0,
+          "discovery_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "predicate_sha256": "a39c9a9b54620d6bf935fe4612cfca9427b7fa600c2d852cdc5fddce8c9d54c7"
+        },
+        {
+          "schema": "context-predicate.v1",
+          "kind": "above_discovery_median",
+          "feature_id": "crucix.acled.total_fatalities.v1",
+          "status": "not_testable",
+          "median": null,
+          "usable_discovery_count": 0,
+          "requested_discovery_count": 0,
+          "discovery_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "predicate_sha256": "e554897f9a64e802b31a5b133f13df8708310f874b3527d755f61a72f64858f5"
+        },
+        {
+          "schema": "context-predicate.v1",
+          "kind": "above_discovery_median",
+          "feature_id": "crucix.who.outbreak_items.v1",
+          "status": "not_testable",
+          "median": null,
+          "usable_discovery_count": 0,
+          "requested_discovery_count": 0,
+          "discovery_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "predicate_sha256": "31dde94eabaa3b0b4341ba88541cf26f64279ff07e835e98addb7ddd133750d0"
+        },
+        {
+          "schema": "context-predicate.v1",
+          "kind": "above_discovery_median",
+          "feature_id": "crucix.ecb.deposit_rate.v1",
+          "status": "not_testable",
+          "median": null,
+          "usable_discovery_count": 0,
+          "requested_discovery_count": 0,
+          "discovery_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "predicate_sha256": "79dc2ce2250258c0fa1c19db3420e25251ffd8a5796af137b3e9995de50c4d7b"
+        }
+      ]
+    },
+    "experiments": [
+      {
+        "experiment_id": "4691b01b4c031378e7ed07bb2d528ae855d26f065e58c38d3de07e2d66934d36",
+        "hypothesis_id": "h-4",
+        "source_report_id": "prediction_20260920_120000",
+        "source_hypothesis_id": "h-1",
+        "spec_sha256": "684de24de69e15fabd3396cb83d6821b2d6dbb94a0f0cfc0489671b181dfd494",
+        "status": "testable_discovery",
+        "reason_codes": [
+          "testable_discovery"
+        ],
+        "paired_session_count": 20,
+        "mean_paired_net_difference": "0.0020",
+        "next_allowed_action": "none"
+      },
+      {
+        "experiment_id": "8b7acde78c83b5d82f59e971fbb96b4a6169d488703f2eb3eb991e7531a299fe",
+        "hypothesis_id": "h-3",
+        "source_report_id": "prediction_20260920_120000",
+        "source_hypothesis_id": "h-1",
+        "spec_sha256": "b7236def52cd2a360804b0d8c6c0bc2335b9e9372bdb55d98d2c235761a7b9cd",
+        "status": "insufficient_data",
+        "reason_codes": [
+          "insufficient_data"
+        ],
+        "paired_session_count": 0,
+        "mean_paired_net_difference": null,
+        "next_allowed_action": "revise_in_open_epoch"
+      },
+      {
+        "experiment_id": "57f9a16ec01fca7e00ef59d081f545d82aa56da1da9e3bf6b00e8f6e543730cc",
+        "hypothesis_id": "h-2",
+        "source_report_id": "prediction_20260920_120000",
+        "source_hypothesis_id": "h-1",
+        "spec_sha256": "c9d18426b63243ea3a46f03d26cf3def2364aaca3bd96f775b7a077f6e2911da",
+        "status": "failed",
+        "reason_codes": [
+          "failed"
+        ],
+        "paired_session_count": 0,
+        "mean_paired_net_difference": null,
+        "next_allowed_action": "revise_in_open_epoch"
+      },
+      {
+        "experiment_id": "e398848a61f020158676ca16bba062c68140e4d068a39df12497f477a20c4f73",
+        "hypothesis_id": "h-1",
+        "source_report_id": "prediction_20260920_120000",
+        "source_hypothesis_id": "h-1",
+        "spec_sha256": "538b3b64848e1a756880ea13797cc97e81bf36ae92754cf728f950adf3213caa",
+        "status": "duplicate",
+        "reason_codes": [
+          "duplicate"
+        ],
+        "paired_session_count": 0,
+        "mean_paired_net_difference": null,
+        "next_allowed_action": "revise_in_open_epoch"
+      },
+      {
+        "experiment_id": null,
+        "hypothesis_id": "h-0",
+        "source_report_id": "prediction_20260920_120000",
+        "source_hypothesis_id": "h-1",
+        "spec_sha256": "64d629cf5ededa5c3b1352590365c34420e49b5cff25aad7fee3bf085baae13c",
+        "status": "rejected",
+        "reason_codes": [
+          "rejected"
+        ],
+        "paired_session_count": 0,
+        "mean_paired_net_difference": null,
+        "next_allowed_action": "revise_in_open_epoch"
+      }
+    ]
+  },
+  "bootstrap_feedback": {
+    "schema": "lab-feedback.v1",
+    "generated_at": "2026-09-20T12:00:00+00:00",
+    "epoch_id": "synthetic-epoch",
+    "ledger_head_sha256": "835d4eaec8eeb30dbfa3002bdd584bd83077e8992f2833cdb57dfd91fd7f3568",
+    "lifetime_trial_count": 0,
+    "proposal_context": {
+      "base_rule_sha256": "becc0699e9ff2f1f4bd2d3aac291eed7494b78fe453034bdc6fe919322e0fc28",
+      "input_manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "evaluation_policy_sha256": "ee0266890f22cc44d91b5a34ab5beb4fc6e2be860facb76e031c290fda2e0d22",
+      "code_commit": "234d796dd439c3de800d2efe062b8f081dcc7286",
+      "admission_closes_at": "2026-09-28T19:35:00+00:00",
+      "admission_state": "open",
+      "allowed_strategy_values": {
+        "selector": [
+          "liquidity",
+          "ranked"
+        ],
+        "name_cap": [
+          10,
+          20,
+          30
+        ],
+        "cost_gate_threshold": [
+          "0.0000",
+          "0.0005",
+          "0.0010"
+        ]
+      },
+      "feature_ids": [
+        "crucix.acled.total_events.v1",
+        "crucix.acled.total_fatalities.v1",
+        "crucix.who.outbreak_items.v1",
+        "crucix.ecb.deposit_rate.v1"
+      ],
+      "frozen_contexts": [
+        {
+          "schema": "context-predicate.v1",
+          "kind": "unconditional"
+        },
+        {
+          "schema": "context-predicate.v1",
+          "kind": "above_discovery_median",
+          "feature_id": "crucix.acled.total_events.v1",
+          "status": "not_testable",
+          "median": null,
+          "usable_discovery_count": 0,
+          "requested_discovery_count": 0,
+          "discovery_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "predicate_sha256": "a39c9a9b54620d6bf935fe4612cfca9427b7fa600c2d852cdc5fddce8c9d54c7"
+        },
+        {
+          "schema": "context-predicate.v1",
+          "kind": "above_discovery_median",
+          "feature_id": "crucix.acled.total_fatalities.v1",
+          "status": "not_testable",
+          "median": null,
+          "usable_discovery_count": 0,
+          "requested_discovery_count": 0,
+          "discovery_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "predicate_sha256": "e554897f9a64e802b31a5b133f13df8708310f874b3527d755f61a72f64858f5"
+        },
+        {
+          "schema": "context-predicate.v1",
+          "kind": "above_discovery_median",
+          "feature_id": "crucix.who.outbreak_items.v1",
+          "status": "not_testable",
+          "median": null,
+          "usable_discovery_count": 0,
+          "requested_discovery_count": 0,
+          "discovery_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "predicate_sha256": "31dde94eabaa3b0b4341ba88541cf26f64279ff07e835e98addb7ddd133750d0"
+        },
+        {
+          "schema": "context-predicate.v1",
+          "kind": "above_discovery_median",
+          "feature_id": "crucix.ecb.deposit_rate.v1",
+          "status": "not_testable",
+          "median": null,
+          "usable_discovery_count": 0,
+          "requested_discovery_count": 0,
+          "discovery_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "predicate_sha256": "79dc2ce2250258c0fa1c19db3420e25251ffd8a5796af137b3e9995de50c4d7b"
+        }
+      ]
+    },
+    "experiments": []
+  },
+  "scenario": {
+    "schema_version": "scenario-synthesis.v1",
+    "report_id": "prediction_20260920_120000",
+    "generated_at": "2026-09-20T12:00:00+00:00",
+    "hypotheses": [
+      {
+        "hypothesis_id": "h-1",
+        "claim": "Synthetic machinery example; no market assertion.",
+        "horizon": {
+          "start": null,
+          "end": null
+        },
+        "epistemic_status": "inferred",
+        "confidence": "low",
+        "supporting_observation_ids": [],
+        "contradicting_observation_ids": [],
+        "unknowns": [
+          "Future paired return direction."
+        ],
+        "falsifiers": [
+          "Nonpositive signed paired mean."
+        ],
+        "watch_conditions": [],
+        "affected_entities": [
+          {
+            "name": "Synthetic Company",
+            "ticker": "S00"
+          }
+        ],
+        "market_observation_ids": [],
+        "market_directions": []
+      }
+    ]
+  },
+  "sidecar": {
+    "schema": "lab-proposals.v1",
+    "report_id": "prediction_20260920_120000",
+    "generated_at": "2026-09-20T12:00:00+00:00",
+    "scenario_sha256": "1bf759ac6b7d6947f29bed1ffd7f26670a0c491140f9f8a07ba9523fc06e6d00",
+    "feedback_sha256": "6b009dddb5b063cf6cec7a3b55a010f3ae85d72872a2b567c0af38f151df6fb6",
+    "status": "ready",
+    "reason_codes": [],
+    "proposals": [
+      {
+        "input_manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "evaluation_policy_sha256": "ee0266890f22cc44d91b5a34ab5beb4fc6e2be860facb76e031c290fda2e0d22",
+        "code_commit": "234d796dd439c3de800d2efe062b8f081dcc7286",
+        "schema": "hypothesis-spec.v1",
+        "hypothesis_id": "lab-1",
+        "parent_experiment_id": null,
+        "source_report_id": "prediction_20260920_120000",
+        "source_hypothesis_id": "h-1",
+        "claim": "Synthetic positive paired difference.",
+        "falsifiers": [
+          "Nonpositive paired mean."
+        ],
+        "strategy_spec": {
+          "schema": "strategy-spec.v1",
+          "base_rule_sha256": "becc0699e9ff2f1f4bd2d3aac291eed7494b78fe453034bdc6fe919322e0fc28",
+          "selector": "liquidity",
+          "name_cap": 10,
+          "cost_gate_threshold": "0.0000"
+        },
+        "context_predicate": {
+          "schema": "context-predicate.v1",
+          "kind": "unconditional"
+        },
+        "expected_sign": "positive",
+        "epoch_id": "synthetic-epoch"
+      }
+    ]
+  },
+  "scenario_sha256": "1bf759ac6b7d6947f29bed1ffd7f26670a0c491140f9f8a07ba9523fc06e6d00",
+  "sidecar_sha256": "0c9dcde01a87b372fb23a62dac419e154f474a4677b50a62a2cfee78d3619dfd",
+  "bootstrap_feedback_sha256": "6b009dddb5b063cf6cec7a3b55a010f3ae85d72872a2b567c0af38f151df6fb6",
+  "normal_markdown": "## Scenario Synthesis (Machine-Readable)\n```json\n{\"generated_at\":\"2026-09-20T12:00:00+00:00\",\"hypotheses\":[{\"affected_entities\":[{\"name\":\"Synthetic Company\",\"ticker\":\"S00\"}],\"claim\":\"Synthetic machinery example; no market assertion.\",\"confidence\":\"low\",\"contradicting_observation_ids\":[],\"epistemic_status\":\"inferred\",\"falsifiers\":[\"Nonpositive signed paired mean.\"],\"horizon\":{\"end\":null,\"start\":null},\"hypothesis_id\":\"h-1\",\"market_directions\":[],\"market_observation_ids\":[],\"supporting_observation_ids\":[],\"unknowns\":[\"Future paired return direction.\"],\"watch_conditions\":[]}],\"report_id\":\"prediction_20260920_120000\",\"schema_version\":\"scenario-synthesis.v1\"}\n```\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n## Lab Proposals (Machine-Readable)\n```json\n{\"feedback_sha256\":\"6b009dddb5b063cf6cec7a3b55a010f3ae85d72872a2b567c0af38f151df6fb6\",\"generated_at\":\"2026-09-20T12:00:00+00:00\",\"proposals\":[{\"claim\":\"Synthetic positive paired difference.\",\"code_commit\":\"234d796dd439c3de800d2efe062b8f081dcc7286\",\"context_predicate\":{\"kind\":\"unconditional\",\"schema\":\"context-predicate.v1\"},\"epoch_id\":\"synthetic-epoch\",\"evaluation_policy_sha256\":\"ee0266890f22cc44d91b5a34ab5beb4fc6e2be860facb76e031c290fda2e0d22\",\"expected_sign\":\"positive\",\"falsifiers\":[\"Nonpositive paired mean.\"],\"hypothesis_id\":\"lab-1\",\"input_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"parent_experiment_id\":null,\"schema\":\"hypothesis-spec.v1\",\"source_hypothesis_id\":\"h-1\",\"source_report_id\":\"prediction_20260920_120000\",\"strategy_spec\":{\"base_rule_sha256\":\"becc0699e9ff2f1f4bd2d3aac291eed7494b78fe453034bdc6fe919322e0fc28\",\"cost_gate_threshold\":\"0.0000\",\"name_cap\":10,\"schema\":\"strategy-spec.v1\",\"selector\":\"liquidity\"}}],\"reason_codes\":[],\"report_id\":\"prediction_20260920_120000\",\"scenario_sha256\":\"1bf759ac6b7d6947f29bed1ffd7f26670a0c491140f9f8a07ba9523fc06e6d00\",\"schema\":\"lab-proposals.v1\",\"status\":\"ready\"}\n```\n",
+  "repair_wrapper": {
+    "scenario": {
+      "schema_version": "scenario-synthesis.v1",
+      "report_id": "prediction_20260920_120000",
+      "generated_at": "2026-09-20T12:00:00+00:00",
+      "hypotheses": [
+        {
+          "hypothesis_id": "h-1",
+          "claim": "Synthetic machinery example; no market assertion.",
+          "horizon": {
+            "start": null,
+            "end": null
+          },
+          "epistemic_status": "inferred",
+          "confidence": "low",
+          "supporting_observation_ids": [],
+          "contradicting_observation_ids": [],
+          "unknowns": [
+            "Future paired return direction."
+          ],
+          "falsifiers": [
+            "Nonpositive signed paired mean."
+          ],
+          "watch_conditions": [],
+          "affected_entities": [
+            {
+              "name": "Synthetic Company",
+              "ticker": "S00"
+            }
+          ],
+          "market_observation_ids": [],
+          "market_directions": []
+        }
+      ]
+    },
+    "lab_proposals": {
+      "schema": "lab-proposals.v1",
+      "report_id": "prediction_20260920_120000",
+      "generated_at": "2026-09-20T12:00:00+00:00",
+      "scenario_sha256": "1bf759ac6b7d6947f29bed1ffd7f26670a0c491140f9f8a07ba9523fc06e6d00",
+      "feedback_sha256": "6b009dddb5b063cf6cec7a3b55a010f3ae85d72872a2b567c0af38f151df6fb6",
+      "status": "ready",
+      "reason_codes": [],
+      "proposals": [
+        {
+          "input_manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "evaluation_policy_sha256": "ee0266890f22cc44d91b5a34ab5beb4fc6e2be860facb76e031c290fda2e0d22",
+          "code_commit": "234d796dd439c3de800d2efe062b8f081dcc7286",
+          "schema": "hypothesis-spec.v1",
+          "hypothesis_id": "lab-1",
+          "parent_experiment_id": null,
+          "source_report_id": "prediction_20260920_120000",
+          "source_hypothesis_id": "h-1",
+          "claim": "Synthetic positive paired difference.",
+          "falsifiers": [
+            "Nonpositive paired mean."
+          ],
+          "strategy_spec": {
+            "schema": "strategy-spec.v1",
+            "base_rule_sha256": "becc0699e9ff2f1f4bd2d3aac291eed7494b78fe453034bdc6fe919322e0fc28",
+            "selector": "liquidity",
+            "name_cap": 10,
+            "cost_gate_threshold": "0.0000"
+          },
+          "context_predicate": {
+            "schema": "context-predicate.v1",
+            "kind": "unconditional"
+          },
+          "expected_sign": "positive",
+          "epoch_id": "synthetic-epoch"
+        }
+      ]
+    }
+  },
+  "repair_response": "{\"lab_proposals\":{\"feedback_sha256\":\"6b009dddb5b063cf6cec7a3b55a010f3ae85d72872a2b567c0af38f151df6fb6\",\"generated_at\":\"2026-09-20T12:00:00+00:00\",\"proposals\":[{\"claim\":\"Synthetic positive paired difference.\",\"code_commit\":\"234d796dd439c3de800d2efe062b8f081dcc7286\",\"context_predicate\":{\"kind\":\"unconditional\",\"schema\":\"context-predicate.v1\"},\"epoch_id\":\"synthetic-epoch\",\"evaluation_policy_sha256\":\"ee0266890f22cc44d91b5a34ab5beb4fc6e2be860facb76e031c290fda2e0d22\",\"expected_sign\":\"positive\",\"falsifiers\":[\"Nonpositive paired mean.\"],\"hypothesis_id\":\"lab-1\",\"input_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"parent_experiment_id\":null,\"schema\":\"hypothesis-spec.v1\",\"source_hypothesis_id\":\"h-1\",\"source_report_id\":\"prediction_20260920_120000\",\"strategy_spec\":{\"base_rule_sha256\":\"becc0699e9ff2f1f4bd2d3aac291eed7494b78fe453034bdc6fe919322e0fc28\",\"cost_gate_threshold\":\"0.0000\",\"name_cap\":10,\"schema\":\"strategy-spec.v1\",\"selector\":\"liquidity\"}}],\"reason_codes\":[],\"report_id\":\"prediction_20260920_120000\",\"scenario_sha256\":\"1bf759ac6b7d6947f29bed1ffd7f26670a0c491140f9f8a07ba9523fc06e6d00\",\"schema\":\"lab-proposals.v1\",\"status\":\"ready\"},\"scenario\":{\"generated_at\":\"2026-09-20T12:00:00+00:00\",\"hypotheses\":[{\"affected_entities\":[{\"name\":\"Synthetic Company\",\"ticker\":\"S00\"}],\"claim\":\"Synthetic machinery example; no market assertion.\",\"confidence\":\"low\",\"contradicting_observation_ids\":[],\"epistemic_status\":\"inferred\",\"falsifiers\":[\"Nonpositive signed paired mean.\"],\"horizon\":{\"end\":null,\"start\":null},\"hypothesis_id\":\"h-1\",\"market_directions\":[],\"market_observation_ids\":[],\"supporting_observation_ids\":[],\"unknowns\":[\"Future paired return direction.\"],\"watch_conditions\":[]}],\"report_id\":\"prediction_20260920_120000\",\"schema_version\":\"scenario-synthesis.v1\"}}",
+  "canonical_vector": {
+    "value": {
+      "unicode": "\u00e9",
+      "number": 1e+21,
+      "negative_zero": -0.0
+    },
+    "text": "{\"negative_zero\":-0.0,\"number\":1e+21,\"unicode\":\"\\u00e9\"}",
+    "sha256": "8b3a9c80ce67d5183831db822b7ebd46d63d7ce4369ee8cc7774eed98a25221c"
+  }
+}

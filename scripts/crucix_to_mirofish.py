@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 import time
@@ -34,6 +35,7 @@ import requests
 # Sibling transport wrapper around ai_backend /callAI.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ai_backend_client as _ai_backend_client  # noqa: E402
+import lab_contract as _lab  # noqa: E402
 
 _ai_backend_chat = _ai_backend_client.chat
 
@@ -895,7 +897,7 @@ def record_basket_symbols(*sources) -> None:
             TRADABLE_BASKET.append(symbol)
 
 
-def _scenario_repair_prompt(report_text, brief_text, manifest, feedback=""):
+def _scenario_repair_prompt(report_text, brief_text, manifest, feedback="", lab_block=None):
     allowed = [
         {
             "observation_id": item["observation_id"],
@@ -926,6 +928,8 @@ def _scenario_repair_prompt(report_text, brief_text, manifest, feedback=""):
         )
     if len(report_text) > 6000:
         report_text = report_text[:6000] + "\n\n[...report truncated...]\n"
+    # Lab content is appended after every truncation above, never inside them.
+    lab_section = lab_block or ""
     return f"""\
 Convert the supplied evidence brief and preserved social-simulation report into
 one concise `scenario-synthesis.v1` JSON object. Output JSON only.
@@ -991,7 +995,7 @@ ORIGINAL EVIDENCE BRIEF:
 
 PRESERVED SIMULATION REPORT:
 {report_text}
-"""
+{lab_section}"""
 
 
 def _scenario_response_metadata(payload):
@@ -1089,6 +1093,38 @@ def _request_scenario_repair(prompt):
     return content
 
 
+def _normalize_scenario_artifact(artifact, manifest):
+    """Existing scenario normalization: entity shapes and market-ID relocation."""
+    market_ids = {
+        item["observation_id"]
+        for item in manifest["observations"]
+        if item["market_derived"]
+    }
+    for hypothesis in artifact.get("hypotheses", []):
+        hypothesis["affected_entities"] = _normalize_affected_entities(
+            hypothesis.get("affected_entities", [])
+        )
+        misplaced_market_ids = (
+            set(hypothesis.get("supporting_observation_ids", []))
+            | set(hypothesis.get("contradicting_observation_ids", []))
+        ) & market_ids
+        if misplaced_market_ids:
+            hypothesis["supporting_observation_ids"] = [
+                item
+                for item in hypothesis.get("supporting_observation_ids", [])
+                if item not in market_ids
+            ]
+            hypothesis["contradicting_observation_ids"] = [
+                item
+                for item in hypothesis.get("contradicting_observation_ids", [])
+                if item not in market_ids
+            ]
+            hypothesis["market_observation_ids"] = list(dict.fromkeys(
+                hypothesis.get("market_observation_ids", [])
+                + sorted(misplaced_market_ids)
+            ))
+
+
 def repair_scenario_synthesis(
     report_text,
     brief_text,
@@ -1115,34 +1151,7 @@ def repair_scenario_synthesis(
             artifact["schema_version"] = "scenario-synthesis.v1"
             artifact["report_id"] = report_id
             artifact["generated_at"] = _iso_or_none(generated_at)
-            market_ids = {
-                item["observation_id"]
-                for item in manifest["observations"]
-                if item["market_derived"]
-            }
-            for hypothesis in artifact.get("hypotheses", []):
-                hypothesis["affected_entities"] = _normalize_affected_entities(
-                    hypothesis.get("affected_entities", [])
-                )
-                misplaced_market_ids = (
-                    set(hypothesis.get("supporting_observation_ids", []))
-                    | set(hypothesis.get("contradicting_observation_ids", []))
-                ) & market_ids
-                if misplaced_market_ids:
-                    hypothesis["supporting_observation_ids"] = [
-                        item
-                        for item in hypothesis.get("supporting_observation_ids", [])
-                        if item not in market_ids
-                    ]
-                    hypothesis["contradicting_observation_ids"] = [
-                        item
-                        for item in hypothesis.get("contradicting_observation_ids", [])
-                        if item not in market_ids
-                    ]
-                    hypothesis["market_observation_ids"] = list(dict.fromkeys(
-                        hypothesis.get("market_observation_ids", [])
-                        + sorted(misplaced_market_ids)
-                    ))
+            _normalize_scenario_artifact(artifact, manifest)
             validate_scenario_synthesis(artifact, manifest)
             return artifact
         except (KeyError, TypeError, ValueError) as error:
@@ -1521,6 +1530,380 @@ when a relevant cited contract has no supportable sign. Omit unrelated
 contracts instead of assigning them `0`. Never emit a direction for aggregate
 Polymarket, Adanos, equities, options, screeners, or other market sources.\
 """
+
+# ---------------------------------------------------------------------------
+# Schwalpaca Phase 7 lab feedback/proposals (D8a/D8b)
+#
+# Enabled only when both --lab-feedback and --lab-proposals-dir are supplied by
+# the trusted launcher. Disabled mode preserves the exact legacy prompts,
+# parsers, return shapes and publication set. Embedded examples below are
+# asserted byte-equal to the shared cross-repo fixture fixtures/lab-feedback.json
+# by scripts/verify_lab_feedback_contract.py; the API container mounts only
+# scripts/, so examples are embedded, never re-derived at runtime.
+# ---------------------------------------------------------------------------
+
+LAB_NORMAL_EXAMPLE_JSON = '{"feedback_sha256":"6b009dddb5b063cf6cec7a3b55a010f3ae85d72872a2b567c0af38f151df6fb6","generated_at":"2026-09-20T12:00:00+00:00","proposals":[{"claim":"Synthetic positive paired difference.","code_commit":"234d796dd439c3de800d2efe062b8f081dcc7286","context_predicate":{"kind":"unconditional","schema":"context-predicate.v1"},"epoch_id":"synthetic-epoch","evaluation_policy_sha256":"ee0266890f22cc44d91b5a34ab5beb4fc6e2be860facb76e031c290fda2e0d22","expected_sign":"positive","falsifiers":["Nonpositive paired mean."],"hypothesis_id":"lab-1","input_manifest_sha256":"1111111111111111111111111111111111111111111111111111111111111111","parent_experiment_id":null,"schema":"hypothesis-spec.v1","source_hypothesis_id":"h-1","source_report_id":"prediction_20260920_120000","strategy_spec":{"base_rule_sha256":"becc0699e9ff2f1f4bd2d3aac291eed7494b78fe453034bdc6fe919322e0fc28","cost_gate_threshold":"0.0000","name_cap":10,"schema":"strategy-spec.v1","selector":"liquidity"}}],"reason_codes":[],"report_id":"prediction_20260920_120000","scenario_sha256":"1bf759ac6b7d6947f29bed1ffd7f26670a0c491140f9f8a07ba9523fc06e6d00","schema":"lab-proposals.v1","status":"ready"}'
+
+LAB_REPAIR_EXAMPLE_JSON = '{"lab_proposals":{"feedback_sha256":"6b009dddb5b063cf6cec7a3b55a010f3ae85d72872a2b567c0af38f151df6fb6","generated_at":"2026-09-20T12:00:00+00:00","proposals":[{"claim":"Synthetic positive paired difference.","code_commit":"234d796dd439c3de800d2efe062b8f081dcc7286","context_predicate":{"kind":"unconditional","schema":"context-predicate.v1"},"epoch_id":"synthetic-epoch","evaluation_policy_sha256":"ee0266890f22cc44d91b5a34ab5beb4fc6e2be860facb76e031c290fda2e0d22","expected_sign":"positive","falsifiers":["Nonpositive paired mean."],"hypothesis_id":"lab-1","input_manifest_sha256":"1111111111111111111111111111111111111111111111111111111111111111","parent_experiment_id":null,"schema":"hypothesis-spec.v1","source_hypothesis_id":"h-1","source_report_id":"prediction_20260920_120000","strategy_spec":{"base_rule_sha256":"becc0699e9ff2f1f4bd2d3aac291eed7494b78fe453034bdc6fe919322e0fc28","cost_gate_threshold":"0.0000","name_cap":10,"schema":"strategy-spec.v1","selector":"liquidity"}}],"reason_codes":[],"report_id":"prediction_20260920_120000","scenario_sha256":"1bf759ac6b7d6947f29bed1ffd7f26670a0c491140f9f8a07ba9523fc06e6d00","schema":"lab-proposals.v1","status":"ready"},"scenario":{"generated_at":"2026-09-20T12:00:00+00:00","hypotheses":[{"affected_entities":[{"name":"Synthetic Company","ticker":"S00"}],"claim":"Synthetic machinery example; no market assertion.","confidence":"low","contradicting_observation_ids":[],"epistemic_status":"inferred","falsifiers":["Nonpositive signed paired mean."],"horizon":{"end":null,"start":null},"hypothesis_id":"h-1","market_directions":[],"market_observation_ids":[],"supporting_observation_ids":[],"unknowns":["Future paired return direction."],"watch_conditions":[]}],"report_id":"prediction_20260920_120000","schema_version":"scenario-synthesis.v1"}}'
+
+
+def _fsync_dir(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _lab_feedback_section(lab_state):
+    """The identical pinned-feedback block for simulation and repair prompts."""
+    if lab_state['feedback'] is None:
+        return (
+            "Lab feedback is unavailable (diagnostic: "
+            + str(lab_state['unavailable_reason'])
+            + "). Do not emit lab proposals; the lab block must carry"
+            + ' `"status":"no_proposals"`, an empty `proposals` list and a null'
+            + " `feedback_sha256`."
+        )
+    context = lab_state['feedback']['proposal_context']
+    brief = {
+        'proposal_context': context,
+        'experiments': lab_state['feedback']['experiments'],
+    }
+    return (
+        "Authoritative pinned lab feedback follows. Copy its epoch identities"
+        " (`epoch_id`, `input_manifest_sha256`, `evaluation_policy_sha256`,"
+        " `code_commit`, `base_rule_sha256`) exactly into every proposal. Use only"
+        " the listed strategy values and frozen context predicates; do not infer"
+        " a policy from a hash. If `admission_state` is not `open`, emit no"
+        " proposals.\n```json\n" + _lab.canonical_json(brief) + "\n```"
+    )
+
+
+def _lab_requirement_block(lab_state):
+    """Normal-path lab instructions appended to SIMULATION_REQUIREMENT."""
+    return (
+        "\n\nWhen lab feedback is attached, the report must additionally end with"
+        " the exact heading:\n## Lab Proposals (Machine-Readable)\n\n"
+        "Under that heading, after the final scenario block, emit one fenced"
+        " `json` object — the `lab-proposals.v1` envelope with exactly `schema`,"
+        " `report_id`, `generated_at`, `scenario_sha256`, `feedback_sha256`,"
+        " `status`, `reason_codes`, `proposals`. Emit at most eight proposals."
+        " Each proposal is one `hypothesis-spec.v1` object with exactly `schema`,"
+        " `hypothesis_id`, `parent_experiment_id` (null), `source_report_id`,"
+        " `source_hypothesis_id`, `claim`, `falsifiers`, `strategy_spec`,"
+        " `context_predicate`, `expected_sign`, `epoch_id`,"
+        " `input_manifest_sha256`, `evaluation_policy_sha256`, `code_commit`."
+        " `source_report_id` is this report's ID; `source_hypothesis_id` must be"
+        " one of the final scenario's hypothesis IDs — never a ticker inferred"
+        " from claim prose. `strategy_spec.name_cap` is one of 10, 20, 30;"
+        " `selector` is `liquidity` or `ranked`; `cost_gate_threshold` is one of"
+        " `\"0.0000\"`, `\"0.0005\"`, `\"0.0010\"`. Metadata values may be"
+        " placeholders; the publisher recomputes all hashes and timestamps after"
+        " validation. Emit no proposal at all rather than an invalid one.\n\n"
+        "Complete valid example:\n```json\n" + LAB_NORMAL_EXAMPLE_JSON + "\n```\n\n"
+        + _lab_feedback_section(lab_state)
+    )
+
+
+def _lab_repair_block(lab_state, original):
+    """Repair-path lab instructions: one wrapper object, outside truncations."""
+    block_text, block_status = original
+    sections = [
+        "\n\nThis lab-enabled repair must return ONE JSON object with exactly two"
+        " keys: `scenario` (the complete `scenario-synthesis.v1` object described"
+        " above) and `lab_proposals` (the complete `lab-proposals.v1` envelope)."
+        " Do not return two adjacent objects, markdown fences, or prose. The"
+        " wrapper itself is never published; both values are validated"
+        " independently. `lab_proposals.source_hypothesis_id` values must"
+        " reference the repaired scenario's actual final hypothesis IDs — if"
+        " you rename or drop a hypothesis, rebind its proposals. Invalid lab"
+        " content is discarded without another repair attempt; an invalid"
+        " scenario still consumes one.\n\nComplete valid example:\n```json\n"
+        + LAB_REPAIR_EXAMPLE_JSON + "\n```\n\n"
+        + _lab_feedback_section(lab_state),
+    ]
+    sections.append(
+        f"The original report draft's lab block parse status was: {block_status}."
+    )
+    if block_text is not None:
+        sections.append(
+            "Original lab block (rebind to the final scenario IDs before reuse):"
+            "\n```json\n" + _lab.canonical_json(block_text) + "\n```"
+        )
+    return "\n\n".join(sections)
+
+
+def _read_lab_file(path, cap):
+    """Read one bounded regular file without following symlinks."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise _lab.LabError(f'feedback_unreadable:{exc.__class__.__name__}') from exc
+    try:
+        with os.fdopen(fd, 'rb') as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise _lab.LabError('feedback_not_regular_file')
+            raw = handle.read(cap + 1)
+    except OSError as exc:
+        raise _lab.LabError(f'feedback_unreadable:{exc.__class__.__name__}') from exc
+    if len(raw) > cap:
+        raise _lab.LabError('feedback_oversize')
+    return raw
+
+
+def _pin_lab_feedback(state, lab):
+    """Pin validated feedback object/hash into checkpoint state at run start.
+
+    A resume returns the pinned session; the current feedback file is never
+    re-read, so a changed `current.json` cannot alter an in-flight run.
+    """
+    pinned = state.get('lab')
+    if pinned is not None:
+        return pinned
+    session = {'feedback': None, 'feedback_sha256': None, 'unavailable_reason': None,
+               'publication': None, 'pending': None}
+    try:
+        raw = _read_lab_file(lab['feedback_path'], _lab.MAX_FEEDBACK_BYTES)
+        feedback = _lab.validate_feedback(_lab.parse_json(raw))
+        session['feedback'] = feedback
+        session['feedback_sha256'] = _lab.canonical_sha256(feedback)
+        print(f"  Lab feedback pinned: {session['feedback_sha256'][:16]}… "
+                  f"({len(feedback['experiments'])} terminal experiments)")
+    except _lab.LabError as exc:
+        session['unavailable_reason'] = str(exc)[:200]
+        print(f"  Lab feedback unavailable ({session['unavailable_reason']});"
+              " ordinary synthesis continues without it")
+    state['lab'] = session
+    _save_state(state)
+    return session
+
+
+def _flush_pending_lab_sidecar(state, lab, lab_state):
+    """Republish retained validated sidecar bytes; a transport retry needs no inference."""
+    pending = lab_state.get('pending')
+    if not pending:
+        return
+    try:
+        _publish_exchange_pair(
+            lab['proposals_dir'], pending['report_id'],
+            pending['scenario_bytes'].encode('utf-8'), pending['sidecar_bytes'].encode('utf-8'),
+            lab['exchange_gid'],
+        )
+    except (_lab.LabError, OSError) as exc:
+        print(f"  Pending lab publication still failing: {exc}")
+        return
+    lab_state['pending'] = None
+    state['lab'] = lab_state
+    _save_state(state)
+    print(f"  Pending lab sidecar published for {pending['report_id']} without a model call")
+
+
+def _sidecar_from_model(envelope, scenario, report_id, generated_at, lab_state):
+    """Authoritative sidecar from a model envelope; host assigns IDs/hashes/times."""
+    _lab.exact(envelope, ('schema', 'report_id', 'generated_at', 'scenario_sha256', 'feedback_sha256',
+                          'status', 'reason_codes', 'proposals'), 'proposal_sidecar')
+    if envelope['schema'] != 'lab-proposals.v1':
+        raise _lab.LabError('invalid_sidecar_schema')
+    proposals = envelope['proposals']
+    reasons = envelope['reason_codes']
+    status = 'ready' if proposals else 'no_proposals'
+    return _lab.build_sidecar(report_id, generated_at, scenario, lab_state['feedback'],
+                              status, reasons, proposals)
+
+
+def _repair_scenario_with_lab(report_text, brief_text, manifest, *, report_id, generated_at,
+                              lab_state, completion_fn=None):
+    """Lab-enabled repair: one wrapper {scenario, lab_proposals}; flat legacy accepted.
+
+    The scenario path (normalization, exact-key validator, at-most-two attempts)
+    is the existing one. Invalid lab content never causes an extra completion
+    call; the wrapper is never published as `prediction_*.json`.
+    """
+    completion_fn = completion_fn or _request_scenario_repair
+    try:
+        original_block = _lab.extract_lab_proposals(report_text)
+        original_status = 'parsed'
+    except _lab.LabError as exc:
+        original_block, original_status = None, str(exc)
+    feedback = ""
+    last_error = None
+    for _ in range(2):
+        prompt = _scenario_repair_prompt(
+            report_text,
+            brief_text,
+            manifest,
+            feedback=feedback,
+            lab_block=_lab_repair_block(lab_state, (original_block, original_status)),
+        )
+        try:
+            kind, value = _lab.parse_repair_bundle(completion_fn(prompt))
+            if kind == 'legacy_flat':
+                artifact = value
+            else:
+                artifact = value['scenario']
+            artifact["schema_version"] = "scenario-synthesis.v1"
+            artifact["report_id"] = report_id
+            artifact["generated_at"] = _iso_or_none(generated_at)
+            _normalize_scenario_artifact(artifact, manifest)
+            validate_scenario_synthesis(artifact, manifest)
+            if kind == 'legacy_flat':
+                sidecar = _lab.build_sidecar(report_id, artifact["generated_at"], artifact,
+                                             lab_state['feedback'], 'no_proposals',
+                                             ['legacy_flat_scenario'], [])
+            else:
+                try:
+                    sidecar = _sidecar_from_model(value['lab_proposals'], artifact,
+                                                  report_id, artifact["generated_at"], lab_state)
+                except _lab.LabError as exc:
+                    sidecar = _lab.build_sidecar(report_id, artifact["generated_at"], artifact,
+                                                 lab_state['feedback'], 'no_proposals', [str(exc)], [])
+            return artifact, sidecar
+        except _lab.LabError as error:
+            # The response wrapper itself was unusable; that costs a scenario attempt.
+            last_error = error
+            feedback = str(error)
+        except (KeyError, TypeError, ValueError) as error:
+            last_error = error
+            feedback = str(error)
+    raise ValueError(
+        f"scenario repair failed local validation: {last_error}"
+    ) from last_error
+
+
+def _lab_scenario_and_proposals(md_content, brief_text, manifest, *, report_id, generated_at,
+                                lab_state, completion_fn=None):
+    """Extract or repair the scenario, then bind exactly one lab sidecar to it."""
+    try:
+        structured = extract_scenario_synthesis(
+            md_content, manifest, report_id=report_id, generated_at=generated_at,
+        )
+    except ValueError as extraction_error:
+        print(
+            "  Embedded scenario block rejected; attempting constrained "
+            f"repair ({extraction_error})"
+        )
+        return _repair_scenario_with_lab(
+            md_content, brief_text, manifest, report_id=report_id,
+            generated_at=generated_at, lab_state=lab_state, completion_fn=completion_fn,
+        )
+    try:
+        envelope = _lab.extract_lab_proposals(md_content)
+        sidecar = _sidecar_from_model(envelope, structured, report_id, generated_at, lab_state)
+    except _lab.LabError as exc:
+        # Bad lab content never invokes scenario repair to rescue the lab block.
+        sidecar = _lab.build_sidecar(report_id, generated_at, structured,
+                                     lab_state['feedback'], 'no_proposals', [str(exc)], [])
+    return structured, sidecar
+
+
+def _publish_private_0600(path, payload):
+    """Publish private sidecar bytes at 0600; identical existing bytes are success."""
+    path = Path(path)
+    if path.exists() or path.is_symlink():
+        existing = _read_lab_file(path, 1024 * 1024)
+        if hashlib.sha256(existing).hexdigest() == hashlib.sha256(payload).hexdigest():
+            return
+        raise _lab.LabError('transport_identity_conflict')
+    fd, temporary = tempfile.mkstemp(prefix='.pending-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            existing = _read_lab_file(path, 1024 * 1024)
+            if hashlib.sha256(existing).hexdigest() != hashlib.sha256(payload).hexdigest():
+                raise _lab.LabError('transport_identity_conflict')
+        _fsync_dir(path.parent)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _exchange_publish_one(root, name, payload, exchange_gid):
+    if not re.fullmatch(r'prediction_[0-9]{8}_[0-9]{6}\.(scenario|lab)\.json', name):
+        raise _lab.LabError('exchange_filename_rejected')
+    target = root / name
+    if target.is_symlink():
+        raise _lab.LabError('exchange_symlink_rejected')
+    if target.exists():
+        existing = _read_lab_file(target, 1024 * 1024)
+        if hashlib.sha256(existing).hexdigest() == hashlib.sha256(payload).hexdigest():
+            return
+        raise _lab.LabError('transport_identity_conflict')
+    fd, temporary = tempfile.mkstemp(prefix='.pending-', dir=root)
+    try:
+        with os.fdopen(fd, 'wb') as handle:
+            os.fchmod(handle.fileno(), 0o640)
+            os.fchown(handle.fileno(), -1, exchange_gid)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, target)
+        except FileExistsError:
+            existing = _read_lab_file(target, 1024 * 1024)
+            if hashlib.sha256(existing).hexdigest() != hashlib.sha256(payload).hexdigest():
+                raise _lab.LabError('transport_identity_conflict')
+        _fsync_dir(root)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _publish_exchange_pair(exchange_dir, report_id, scenario_bytes, sidecar_bytes, exchange_gid):
+    """Scenario copy first, then the sidecar completion marker; both no-replace."""
+    root = Path(exchange_dir)
+    if root.is_symlink() or not root.is_dir():
+        raise _lab.LabError('exchange_directory_unavailable')
+    _exchange_publish_one(root, f'{report_id}.scenario.json', scenario_bytes, exchange_gid)
+    _exchange_publish_one(root, f'{report_id}.lab.json', sidecar_bytes, exchange_gid)
+
+
+def _publish_lab_sidecar(sidecar, structured, artifact_report_id, lab, state, lab_state):
+    """D8a publication: private 0600 sidecar plus the paired exchange files.
+
+    Transport failure is a durable `lab_publication_failed` status in checkpoint
+    and completion metadata; ordinary scenario success stays valid. Validated
+    bytes are retained so a later transport retry needs no model call.
+    """
+    sidecar_bytes = (_lab.canonical_json(sidecar) + '\n').encode('utf-8')
+    scenario_bytes = (_lab.canonical_json(structured) + '\n').encode('utf-8')
+    lab_state['pending'] = {
+        'report_id': artifact_report_id,
+        'scenario_bytes': scenario_bytes.decode('utf-8'),
+        'sidecar_bytes': sidecar_bytes.decode('utf-8'),
+    }
+    state['lab'] = lab_state
+    _save_state(state)
+    publication = {'status': None, 'reason': None}
+    try:
+        _publish_private_0600(OUTPUT_DIR / f'{artifact_report_id}.lab.json', sidecar_bytes)
+        _publish_exchange_pair(lab['proposals_dir'], artifact_report_id,
+                               scenario_bytes, sidecar_bytes, lab['exchange_gid'])
+        publication['status'] = 'published'
+        lab_state['pending'] = None
+    except _lab.LabError as exc:
+        publication['status'] = ('transport_identity_conflict'
+                                 if 'identity_conflict' in str(exc) else 'lab_publication_failed')
+        publication['reason'] = str(exc)[:200]
+    except OSError as exc:
+        publication['status'] = 'lab_publication_failed'
+        publication['reason'] = f'{exc.__class__.__name__}'[:200]
+    lab_state['publication'] = publication
+    state['lab'] = lab_state
+    _save_state(state)
+    if publication['status'] != 'published':
+        print(f"  WARNING: lab sidecar transport {publication['status']}: {publication['reason']}")
+    else:
+        print(f"  Lab sidecar published: {artifact_report_id}.lab.json")
+    return publication
+
 
 # ---------------------------------------------------------------------------
 # Crucix JSON -> Markdown brief
@@ -2842,6 +3225,7 @@ def run_pipeline(
     project_name: str,
     resume: bool = False,
     manifest_path: str | None = None,
+    lab: dict | None = None,
 ):
     """Drive the full MiroFish pipeline with checkpoint/resume support.
 
@@ -2875,6 +3259,12 @@ def run_pipeline(
         }
         completed = 0
 
+    lab_state = None
+    if lab is not None:
+        # Pin validated feedback before any model call; resume never re-reads it.
+        lab_state = _pin_lab_feedback(state, lab)
+        _flush_pending_lab_sidecar(state, lab, lab_state)
+
     print(f"\n{'='*60}")
     print(f"  MiroFish Pipeline — {project_name}")
     print(f"  Max rounds: {max_rounds}")
@@ -2891,7 +3281,10 @@ def run_pipeline(
                 f"{base}/api/graph/ontology/generate",
                 files={"files": ("crucix_brief.md", f, "text/markdown")},
                 data={
-                    "simulation_requirement": SIMULATION_REQUIREMENT,
+                    "simulation_requirement": (
+                        SIMULATION_REQUIREMENT + _lab_requirement_block(lab_state)
+                        if lab_state is not None else SIMULATION_REQUIREMENT
+                    ),
                     "project_name": project_name,
                 },
                 timeout=300,
@@ -3214,25 +3607,37 @@ def run_pipeline(
         manifest["report_id"] = artifact_report_id
         manifest["generated_at"] = artifact_time
         validate_observation_manifest(manifest)
-        try:
-            structured = extract_scenario_synthesis(
-                md_content,
-                manifest,
-                report_id=artifact_report_id,
-                generated_at=artifact_time,
-            )
-        except ValueError as extraction_error:
-            print(
-                "  Embedded scenario block rejected; attempting constrained "
-                f"repair ({extraction_error})"
-            )
-            structured = repair_scenario_synthesis(
+        lab_sidecar = None
+        lab_publication = None
+        if lab_state is not None:
+            structured, lab_sidecar = _lab_scenario_and_proposals(
                 md_content,
                 Path(md_path).read_text(encoding="utf-8"),
                 manifest,
                 report_id=artifact_report_id,
                 generated_at=artifact_time,
+                lab_state=lab_state,
             )
+        else:
+            try:
+                structured = extract_scenario_synthesis(
+                    md_content,
+                    manifest,
+                    report_id=artifact_report_id,
+                    generated_at=artifact_time,
+                )
+            except ValueError as extraction_error:
+                print(
+                    "  Embedded scenario block rejected; attempting constrained "
+                    f"repair ({extraction_error})"
+                )
+                structured = repair_scenario_synthesis(
+                    md_content,
+                    Path(md_path).read_text(encoding="utf-8"),
+                    manifest,
+                    report_id=artifact_report_id,
+                    generated_at=artifact_time,
+                )
         canonical_markdown = append_preserved_simulation(
             render_scenario_markdown(structured, manifest),
             md_content,
@@ -3258,6 +3663,11 @@ def run_pipeline(
             canonical_markdown,
             _validate_report_text,
         )
+        # Lab sidecar publishes only after every ordinary sibling succeeds (D8a).
+        if lab_state is not None and lab_sidecar is not None:
+            lab_publication = _publish_lab_sidecar(
+                lab_sidecar, structured, artifact_report_id, lab, state, lab_state,
+            )
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         print(f"  FAILED: scenario publication rejected: {error}")
         sys.exit(1)
@@ -3302,6 +3712,15 @@ def run_pipeline(
         "simulation_path": str(simulation_path),
         "structured_path": str(structured_path),
         "manifest_path": str(final_manifest_path),
+        "lab": (
+            None if lab_state is None else {
+                "feedback_sha256": lab_state["feedback_sha256"],
+                "feedback_unavailable": lab_state["unavailable_reason"],
+                "sidecar_status": None if lab_sidecar is None else lab_sidecar["status"],
+                "sidecar_reason_codes": None if lab_sidecar is None else lab_sidecar["reason_codes"],
+                "publication": lab_publication,
+            }
+        ),
     }
 
 
@@ -3415,7 +3834,22 @@ def main():
     parser.add_argument("--project-name", default=None, help="Override project name")
     parser.add_argument("--no-news", action="store_true", help="Skip news-aggregator fetch")
     parser.add_argument("--resume", action="store_true", help="Resume from last checkpoint (skips data gathering)")
+    parser.add_argument("--lab-feedback", default=None, metavar="PATH",
+                        help="Pinned lab-feedback.v1 file (requires --lab-proposals-dir)")
+    parser.add_argument("--lab-proposals-dir", default=None, metavar="DIR",
+                        help="Exchange directory for the published scenario/sidecar pair (requires --lab-feedback)")
     args = parser.parse_args()
+
+    lab = None
+    if bool(args.lab_feedback) != bool(args.lab_proposals_dir):
+        print("Error: --lab-feedback and --lab-proposals-dir must be supplied together.")
+        sys.exit(2)
+    if args.lab_feedback:
+        lab = {
+            "feedback_path": args.lab_feedback,
+            "proposals_dir": args.lab_proposals_dir,
+            "exchange_gid": int(os.environ.get("MIROFISH_LAB_EXCHANGE_GID", "1001")),
+        }
 
     # Resume mode — skip data gathering, jump straight to pipeline
     if args.resume:
@@ -3433,6 +3867,7 @@ def main():
             state.get("max_rounds", args.max_rounds),
             state.get("project_name", "Crucix Trading Intel"),
             resume=True,
+            lab=lab,
         )
         return
 
@@ -3950,6 +4385,7 @@ def main():
         args.max_rounds,
         project_name,
         manifest_path=str(manifest_path),
+        lab=lab,
     )
 
 

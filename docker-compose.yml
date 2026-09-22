@@ -121,6 +121,10 @@ services:
       - AI_BACKEND_BOOST_PROVIDER=${AI_BACKEND_BOOST_PROVIDER:-deepseek}
       - AI_BACKEND_BOOST_MODEL=${AI_BACKEND_BOOST_MODEL:-deepseek-v4-flash}
       - GRAPHITI_URL=http://graphiti_api:8000
+      # Schwalpaca Phase 7 lab exchange (D8a); deployed at CP7-LOOP, staged source only.
+      - MIROFISH_LAB_FEEDBACK_PATH=/lab-exchange/feedback/current.json
+      - MIROFISH_LAB_PROPOSALS_DIR=/lab-exchange/proposals
+      - MIROFISH_LAB_EXCHANGE_GID=1001
     ports:
       - "5010:5010"
     volumes:
@@ -129,6 +133,8 @@ services:
       - /home/irvins/Projects/Crucix/runs:/crucix/runs:ro
       - /home/irvins/Projects/schwalpaca/journal:/journals/schwalpaca:ro
       - /home/irvins/Projects/kalshimarket/journal:/journals/kalshi:ro
+      - /home/irvins/.local/share/schwalpaca-lab-exchange/feedback:/lab-exchange/feedback:ro
+      - /home/irvins/.local/share/schwalpaca-lab-exchange/proposals:/lab-exchange/proposals:rw
       - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       - "host.docker.internal:host-gateway"
