@@ -3735,7 +3735,7 @@ def run_pipeline(
     }
 
 
-def _call_llama_swap(prompt: str, model: str = "granite4.1-8b",
+def _call_llama_swap(prompt: str, model: str = "router-qwen3.5-9b",
                       host: str = LLAMA_SWAP_URL,
                       timeout: int = 120) -> str | None:
     """Try local llama-swap translation. Returns None if unavailable."""
@@ -3766,7 +3766,7 @@ def _call_llama_swap(prompt: str, model: str = "granite4.1-8b",
 def translate_report_to_english(report_path: Path) -> None:
     """Translate a Chinese OASIS report to English and save as *._en.md.
 
-    Tries local llama-swap (granite4.1-8b) first for speed & privacy,
+    Tries local llama-swap (router-qwen3.5-9b) first for speed & privacy,
     then falls back to kimi-k2.6 via API.
     """
     import urllib.request, json as _json
