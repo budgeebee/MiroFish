@@ -59,9 +59,10 @@ here until a new phase is explicitly requested.
 M8 of `PHASE7_PLAN.md` (in `/home/irvins/Projects/worktrees/schwalpaca-phase6`)
 is implemented on branch `schwalpaca-phase7` in the isolated worktree
 `/home/irvins/Projects/worktrees/mirofish-schwalpaca-phase7`. The canonical
-checkout `/home/irvins/Projects/MiroFish` is **not** edited; it carries an
-uncommitted live translation-model change (`granite4.1-8b` →
-`router-qwen3.5-9b`) that CP7-LOOP/M10 must reconcile (S plan amendment A7-12).
+checkout `/home/irvins/Projects/MiroFish` is **not** edited. The translation
+model switch (`granite4.1-8b` → `router-qwen3.5-9b`, S plan amendment A7-12) is
+committed (45ff44e, e17bb45 on 2026-09-22): granite mistranslated 3000亿元 as
+"30 billion yuan". granite4.1-8b was removed from llama-swap on 2026-09-25.
 
 - Lab mode activates only when the trusted launcher supplies both
   `--lab-feedback PATH` and `--lab-proposals-dir DIR` (configured via
