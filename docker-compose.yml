@@ -71,8 +71,8 @@ services:
       - AI_BACKEND_API_KEY=${AI_BACKEND_API_KEY:-}
       - AI_BACKEND_PROVIDER=${AI_BACKEND_PROVIDER:-minimax}
       - AI_BACKEND_MODEL=${AI_BACKEND_MODEL:-MiniMax-M3}
-      - AI_BACKEND_BOOST_PROVIDER=${AI_BACKEND_BOOST_PROVIDER:-deepseek}
-      - AI_BACKEND_BOOST_MODEL=${AI_BACKEND_BOOST_MODEL:-deepseek-v4-flash}
+      - AI_BACKEND_BOOST_PROVIDER=${AI_BACKEND_BOOST_PROVIDER:-minimax}
+      - AI_BACKEND_BOOST_MODEL=${AI_BACKEND_BOOST_MODEL:-MiniMax-M2.7-highspeed}
       # camel-oasis uses OpenAI SDK; point it at the shim, not directly at a provider.
       - OPENAI_BASE_URL=http://mirofish-openai-shim:9401/v1
       - OPENAI_API_KEY=shim-routed
@@ -118,8 +118,8 @@ services:
       - AI_BACKEND_API_KEY=${AI_BACKEND_API_KEY:-}
       - AI_BACKEND_PROVIDER=${AI_BACKEND_PROVIDER:-minimax}
       - AI_BACKEND_MODEL=${AI_BACKEND_MODEL:-MiniMax-M3}
-      - AI_BACKEND_BOOST_PROVIDER=${AI_BACKEND_BOOST_PROVIDER:-deepseek}
-      - AI_BACKEND_BOOST_MODEL=${AI_BACKEND_BOOST_MODEL:-deepseek-v4-flash}
+      - AI_BACKEND_BOOST_PROVIDER=${AI_BACKEND_BOOST_PROVIDER:-minimax}
+      - AI_BACKEND_BOOST_MODEL=${AI_BACKEND_BOOST_MODEL:-MiniMax-M2.7-highspeed}
       - GRAPHITI_URL=http://graphiti_api:8000
       # Schwalpaca Phase 7 lab exchange (D8a); deployed at CP7-LOOP, staged source only.
       - MIROFISH_LAB_FEEDBACK_PATH=/lab-exchange/feedback/current.json

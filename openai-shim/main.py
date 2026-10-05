@@ -35,6 +35,12 @@ class ChatMessage(BaseModel):
     role: str
     content: Optional[str] = None
     name: Optional[str] = None
+    # Required for tool-calling turns: MiniMax matches a `tool` message to the
+    # assistant message that requested it by id. Without these two fields
+    # pydantic drops them and every follow-up turn 400s with
+    # "tool result's tool id() not found".
+    tool_calls: Optional[List[dict]] = None
+    tool_call_id: Optional[str] = None
 
 
 class ChatCompletionRequest(BaseModel):

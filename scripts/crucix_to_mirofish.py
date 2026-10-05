@@ -72,8 +72,8 @@ AI_BACKEND_URL = os.getenv("AI_BACKEND_URL", "http://localhost:9400")
 AI_BACKEND_API_KEY = os.getenv("AI_BACKEND_API_KEY", "")
 AI_BACKEND_PROVIDER = os.getenv("AI_BACKEND_PROVIDER", "minimax")
 AI_BACKEND_MODEL = os.getenv("AI_BACKEND_MODEL", "MiniMax-M3")
-AI_BACKEND_BOOST_PROVIDER = os.getenv("AI_BACKEND_BOOST_PROVIDER", "deepseek")
-AI_BACKEND_BOOST_MODEL = os.getenv("AI_BACKEND_BOOST_MODEL", "deepseek-v4-flash")
+AI_BACKEND_BOOST_PROVIDER = os.getenv("AI_BACKEND_BOOST_PROVIDER", "minimax")
+AI_BACKEND_BOOST_MODEL = os.getenv("AI_BACKEND_BOOST_MODEL", "MiniMax-M2.7-highspeed")
 SCHWALPACA_API_KEY = os.getenv("SCHWALPACA_API_KEY", "")
 REPORT_MIN_BYTES = 1000
 # Tickers the intel layer put on the table this run (screeners, movers,

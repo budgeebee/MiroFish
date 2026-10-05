@@ -35,9 +35,11 @@ class Config:
     AI_BACKEND_PROVIDER = os.environ.get('AI_BACKEND_PROVIDER', 'minimax')
     AI_BACKEND_MODEL = os.environ.get('AI_BACKEND_MODEL', 'MiniMax-M3')
 
-    # Boost LLM (failover target — default: deepseek-v4-flash for cheaper backstop)
-    AI_BACKEND_BOOST_PROVIDER = os.environ.get('AI_BACKEND_BOOST_PROVIDER', 'deepseek')
-    AI_BACKEND_BOOST_MODEL = os.environ.get('AI_BACKEND_BOOST_MODEL', 'deepseek-v4-flash')
+    # Boost LLM (failover target). The openai-shim pins SHIM_PROVIDER=minimax and
+    # only swaps the model name, so the boost model must be a MiniMax model —
+    # naming a DeepSeek model here sent it to MiniMax and 400'd on every call.
+    AI_BACKEND_BOOST_PROVIDER = os.environ.get('AI_BACKEND_BOOST_PROVIDER', 'minimax')
+    AI_BACKEND_BOOST_MODEL = os.environ.get('AI_BACKEND_BOOST_MODEL', 'MiniMax-M2.7-highspeed')
 
     # camel-oasis simulation engine speaks OpenAI ChatCompletion API. Set
     # OPENAI_BASE_URL to the local OpenAI-shim service (see docker-compose

@@ -440,15 +440,15 @@ def scenario_repair_backend_fixture():
         original_chat = _abc.chat
         original_bound_chat = pipeline._ai_backend_chat
         _abc.chat = pipeline._ai_backend_chat = make_fixture({
-            "provider": "deepseek",
-            "model": "deepseek-v4-flash",
+            "provider": pipeline.AI_BACKEND_BOOST_PROVIDER,
+            "model": pipeline.AI_BACKEND_BOOST_MODEL,
             "task": "chat",
             "result": {"text": '{"fixture":true}'},
         })
         content = pipeline._request_scenario_repair("fixture prompt")
         _abc.chat = pipeline._ai_backend_chat = make_fixture({
-            "provider": "deepseek",
-            "model": "deepseek-v4-flash",
+            "provider": pipeline.AI_BACKEND_BOOST_PROVIDER,
+            "model": pipeline.AI_BACKEND_BOOST_MODEL,
             "task": "chat",
             "result": {"text": None, "reasoning": "private-reasoning-fixture"},
         })
@@ -467,7 +467,7 @@ def scenario_repair_backend_fixture():
         else:
             os.environ["AI_BACKEND_API_KEY"] = original_key
 
-    check(content == '{"fixture":true}', "DeepSeek repair response changed")
+    check(content == '{"fixture":true}', "boost repair response changed")
     check(len(calls) == 2, "scenario repair did not use exactly one backend per call")
     endpoint, request = calls[0]
     check(
@@ -480,25 +480,25 @@ def scenario_repair_backend_fixture():
     check(
         ("X-API-Key" not in request["headers"] or request["headers"].get("X-API-Key") == "OMITTED")
         and "Authorization" not in request["headers"]
-        and body["provider"] == "deepseek"
+        and body["provider"] == pipeline.AI_BACKEND_BOOST_PROVIDER
         and body["task"] == "chat"
-        and repair_metadata["model"] == "deepseek-v4-flash"
+        and repair_metadata["model"] == pipeline.AI_BACKEND_BOOST_MODEL
         and repair_metadata["max_tokens"] == 8192
         and repair_metadata["response_format"] == {"type": "json_object"}
         and repair_metadata["thinking"] == {"type": "disabled"}
         and request["timeout"] == 300,
-        "scenario repair lost the DeepSeek V4 Flash request contract",
+        "scenario repair lost the configured boost request contract",
     )
     system_prompt = body["prompt"][0]["content"]
     check(
         "raw JSON object only" in system_prompt
         and "must begin with { and end with }" in system_prompt
         and "<think>" in system_prompt,
-        "DeepSeek repair lost strict raw-JSON prompting",
+        "boost repair lost strict raw-JSON prompting",
     )
     check(
         "scenario repair response has no JSON object" in diagnostic_error
-        and '"provider": "deepseek"' in diagnostic_error
+        and f'"provider": "{pipeline.AI_BACKEND_BOOST_PROVIDER}"' in diagnostic_error
         and '"result_keys": ["reasoning", "text"]' in diagnostic_error
         and '"result_text_type": "NoneType"' in diagnostic_error
         and "private-prompt-fixture" not in diagnostic_error
